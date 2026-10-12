@@ -112,6 +112,7 @@ static void saveSettings() {
     prefs.putUChar("mode", (uint8_t)mode);
     prefs.putUInt("c0", t.c0);
     prefs.putUInt("c1", t.c1);
+    prefs.putUInt("track", dash.getTrack());
     prefs.putUChar("bright", (uint8_t)brightness);
 }
 
@@ -227,6 +228,9 @@ static void handleCommand(char *cmd) {
             dash.setTheme({(uint32_t)strtoul(arg, nullptr, 16), (uint32_t)strtoul(second + 1, nullptr, 16)});
             saveSettings();
         }
+    } else if (!strcmp(cmd, "TRACK")) {
+        dash.setTrack(strtoul(arg, nullptr, 16));
+        saveSettings();
     } else if (!strcmp(cmd, "BRIGHT")) {
         brightness = constrain(atoi(arg), 5, 100);
         setBrightness(brightness);
@@ -270,6 +274,7 @@ void setup() {
     prefs.begin("cooler", false);
     brightness = prefs.getUChar("bright", 100);
     dash.setTheme({prefs.getUInt("c0", 0x2D7CFF), prefs.getUInt("c1", 0xB22CFF)});
+    dash.setTrack(prefs.getUInt("track", 0x1C1C24));
     setBrightness(brightness);
     applyMode((Mode)constrain(prefs.getUChar("mode", MODE_CPU), MODE_CPU, MODE_GIF));
 }

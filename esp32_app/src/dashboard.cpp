@@ -10,7 +10,6 @@
 #include "fonts/font_small.h"
 
 static const int CX = 240, CY = 240;
-static const uint32_t TRACK = 0x1C1C24;
 static const uint32_t MUTED = 0x8E8E9C;
 static const uint32_t DIM = 0x4A4A56;
 static const uint32_t WHITE = 0xFFFFFF;
@@ -20,7 +19,7 @@ static const float TEMP_MAX = 100.0f;
 enum { CPU_T, CPU_L, GPU_T, GPU_L };
 
 Dashboard::Dashboard()
-    : online(false), dirty(true), lastStatsMs(0), lastUpdateMs(0), view(VIEW_CPU), theme{0x2D7CFF, 0xB22CFF} {
+    : online(false), dirty(true), lastStatsMs(0), lastUpdateMs(0), view(VIEW_CPU), theme{0x2D7CFF, 0xB22CFF}, track(0x1C1C24) {
     for (int i = 0; i < 4; i++) {
         target[i] = NAN;
         shown[i] = 0.0f;
@@ -44,6 +43,11 @@ void Dashboard::setView(View v) {
 
 void Dashboard::setTheme(const Theme &t) {
     theme = t;
+    dirty = true;
+}
+
+void Dashboard::setTrack(uint32_t rgb) {
+    track = rgb;
     dirty = true;
 }
 
@@ -95,7 +99,7 @@ void Dashboard::renderSingle(Canvas &c, const char *label, int t, int l) {
     bool loadValid = online && !isnan(target[l]);
     float fill = shown[t] / TEMP_MAX;
 
-    ArcStyle gauge = {CX, CY, 232, 20, 220, 280, 1, TRACK, TRACK, 255, 1.0f, true};
+    ArcStyle gauge = {CX, CY, 232, 20, 220, 280, 1, track, track, 255, 1.0f, true};
     c.arc(gauge, 1.0f);
 
     ArcStyle glow = gauge;
@@ -136,7 +140,7 @@ void Dashboard::renderSingle(Canvas &c, const char *label, int t, int l) {
 }
 
 void Dashboard::renderGaugeHalf(Canvas &c, float start, int dir, float fill, int cx, const char *label, int t, int l) {
-    ArcStyle gauge = {CX, CY, 232, 20, start, 140, dir, TRACK, TRACK, 255, 1.0f, true};
+    ArcStyle gauge = {CX, CY, 232, 20, start, 140, dir, track, track, 255, 1.0f, true};
     c.arc(gauge, 1.0f);
 
     ArcStyle glow = gauge;

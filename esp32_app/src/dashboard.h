@@ -20,6 +20,8 @@ public:
     void setStats(const Stats &stats, uint32_t nowMs);
     void setView(View v);
     void setTheme(const Theme &t);
+    void setTrack(uint32_t rgb);
+    uint32_t getTrack() const { return track; }
     View getView() const { return view; }
     Theme getTheme() const { return theme; }
 
@@ -40,4 +42,5 @@ private:
     uint32_t lastUpdateMs;
     View view;
     Theme theme;
+    uint32_t track;
 };
