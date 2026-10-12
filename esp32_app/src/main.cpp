@@ -6,13 +6,13 @@
 #include "display.h"
 #include "dashboard.h"
 
-#define PROTOCOL_VERSION 2
+#define PROTOCOL_VERSION 3
 #define GIF_PATH "/anim.gif"
 #define UPLOAD_CHUNK 4096
 #define UPLOAD_TIMEOUT_MS 5000
 #define FS_MARGIN 16384
 
-enum Mode { MODE_CPU, MODE_GPU, MODE_DUAL, MODE_GIF };
+enum Mode { MODE_CPU, MODE_GPU, MODE_DUAL, MODE_GIF, MODE_LIQUID };
 
 static Mode mode = MODE_CPU;
 static int brightness = 100;
@@ -23,7 +23,7 @@ static Preferences prefs;
 static AnimatedGIF gif;
 static uint8_t *gifData = nullptr;
 static bool gifOpen = false;
-static int gifOffX = 0, gifOffY = 0;
+static int gifOffX = 0, gifOffY = 0, gifScale = 1;
 static uint32_t nextFrameMs = 0;
 
 static const char *fatalError = nullptr;
@@ -45,18 +45,23 @@ static void showMessage(const char *title, const char *detail) {
 }
 
 static void GIFDraw(GIFDRAW *p) {
-    int y = gifOffY + p->iY + p->y;
-    if (y < 0 || y >= SCREEN_HEIGHT) return;
-    uint16_t *row = frameBuffer() + y * SCREEN_WIDTH;
+    const int s = gifScale;
+    int y0 = gifOffY + (p->iY + p->y) * s;
     const uint8_t *src = p->pPixels;
     const uint16_t *pal = p->pPalette;
-    int x0 = gifOffX + p->iX;
-    for (int i = 0; i < p->iWidth; i++) {
-        int x = x0 + i;
-        uint8_t c = src[i];
-        if (x < 0 || x >= SCREEN_WIDTH) continue;
-        if (p->ucHasTransparency && c == p->ucTransparent) continue;
-        row[x] = pal[c];
+    int x0 = gifOffX + p->iX * s;
+    for (int dy = 0; dy < s; dy++) {
+        int y = y0 + dy;
+        if (y < 0 || y >= SCREEN_HEIGHT) continue;
+        uint16_t *row = frameBuffer() + y * SCREEN_WIDTH;
+        for (int i = 0; i < p->iWidth; i++) {
+            uint8_t c = src[i];
+            if (p->ucHasTransparency && c == p->ucTransparent) continue;
+            for (int dx = 0; dx < s; dx++) {
+                int x = x0 + i * s + dx;
+                if (x >= 0 && x < SCREEN_WIDTH) row[x] = pal[c];
+            }
+        }
     }
 }
 
@@ -89,8 +94,9 @@ static void openGif() {
         return;
     }
     gifOpen = true;
-    gifOffX = (SCREEN_WIDTH - gif.getCanvasWidth()) / 2;
-    gifOffY = (SCREEN_HEIGHT - gif.getCanvasHeight()) / 2;
+    gifScale = (gif.getCanvasWidth() <= SCREEN_WIDTH / 2 && gif.getCanvasHeight() <= SCREEN_HEIGHT / 2) ? 2 : 1;
+    gifOffX = (SCREEN_WIDTH - gif.getCanvasWidth() * gifScale) / 2;
+    gifOffY = (SCREEN_HEIGHT - gif.getCanvasHeight() * gifScale) / 2;
     canvas->clear(0);
     nextFrameMs = millis();
 }
@@ -102,7 +108,10 @@ static void applyMode(Mode m) {
         return;
     }
     closeGif();
-    dash.setView(mode == MODE_GPU ? VIEW_GPU : mode == MODE_DUAL ? VIEW_DUAL : VIEW_CPU);
+    dash.setView(mode == MODE_GPU      ? VIEW_GPU
+                 : mode == MODE_DUAL   ? VIEW_DUAL
+                 : mode == MODE_LIQUID ? VIEW_LIQUID
+                                       : VIEW_CPU);
     dash.render(*canvas);
     flushDisplay();
 }
@@ -113,6 +122,7 @@ static void saveSettings() {
     prefs.putUInt("c0", t.c0);
     prefs.putUInt("c1", t.c1);
     prefs.putUInt("track", dash.getTrack());
+    prefs.putBool("tempcolor", dash.getTempColor());
     prefs.putUChar("bright", (uint8_t)brightness);
 }
 
@@ -211,15 +221,19 @@ static void handleCommand(char *cmd) {
         s.cpuLoad = parseField(arg);
         s.gpuTemp = parseField(arg);
         s.gpuLoad = parseField(arg);
+        s.liquidTemp = parseField(arg);
+        s.pumpRpm = parseField(arg);
+        s.fanRpm = parseField(arg);
         dash.setStats(s, millis());
     } else if (!strcmp(cmd, "TEMP")) {
-        dash.setStats({strtof(arg, nullptr), NAN, NAN, NAN}, millis());
+        dash.setStats({strtof(arg, nullptr), NAN, NAN, NAN, NAN, NAN, NAN}, millis());
     } else if (!strcmp(cmd, "MODE")) {
         Mode m = mode;
         if (!strcmp(arg, "CPU") || !strcmp(arg, "TEMP")) m = MODE_CPU;
         else if (!strcmp(arg, "GPU")) m = MODE_GPU;
         else if (!strcmp(arg, "DUAL")) m = MODE_DUAL;
         else if (!strcmp(arg, "GIF")) m = MODE_GIF;
+        else if (!strcmp(arg, "LIQUID")) m = MODE_LIQUID;
         if (m != mode || (m == MODE_GIF && !gifOpen)) applyMode(m);
         saveSettings();
     } else if (!strcmp(cmd, "THEME")) {
@@ -228,6 +242,9 @@ static void handleCommand(char *cmd) {
             dash.setTheme({(uint32_t)strtoul(arg, nullptr, 16), (uint32_t)strtoul(second + 1, nullptr, 16)});
             saveSettings();
         }
+    } else if (!strcmp(cmd, "COLORMODE")) {
+        dash.setTempColor(!strcmp(arg, "TEMP"));
+        saveSettings();
     } else if (!strcmp(cmd, "TRACK")) {
         dash.setTrack(strtoul(arg, nullptr, 16));
         saveSettings();
@@ -275,8 +292,9 @@ void setup() {
     brightness = prefs.getUChar("bright", 100);
     dash.setTheme({prefs.getUInt("c0", 0x2D7CFF), prefs.getUInt("c1", 0xB22CFF)});
     dash.setTrack(prefs.getUInt("track", 0x1C1C24));
+    dash.setTempColor(prefs.getBool("tempcolor", false));
     setBrightness(brightness);
-    applyMode((Mode)constrain(prefs.getUChar("mode", MODE_CPU), MODE_CPU, MODE_GIF));
+    applyMode((Mode)constrain(prefs.getUChar("mode", MODE_CPU), MODE_CPU, MODE_LIQUID));
 }
 
 void loop() {

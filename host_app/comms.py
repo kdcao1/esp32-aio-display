@@ -21,6 +21,7 @@ class ESP32Comms:
         self.ser = None
         self.lock = threading.RLock()
         self._last_attempt = 0.0
+        self._pending = b""
 
     @property
     def connected(self):
@@ -46,12 +47,20 @@ class ESP32Comms:
         ser.open()
         return ser
 
+    def _readline(self, ser, deadline):
+        while b"\n" not in self._pending:
+            if time.time() > deadline:
+                return None
+            self._pending += ser.read(max(1, ser.in_waiting))
+        line, self._pending = self._pending.split(b"\n", 1)
+        return line.decode(errors="ignore").strip()
+
     def _handshake(self, ser):
         ser.reset_input_buffer()
+        self._pending = b""
         ser.write(b"PING\n")
         deadline = time.time() + 1.5
-        while time.time() < deadline:
-            line = ser.readline().decode(errors="ignore").strip()
+        while (line := self._readline(ser, deadline)) is not None:
             if line.startswith("PONG COOLERSCREEN"):
                 return True
         return False
@@ -117,15 +126,20 @@ class ESP32Comms:
     def set_brightness(self, percent):
         return self.send_command(f"BRIGHT:{int(percent)}")
 
-    def send_stats(self, cpu_temp, cpu_load, gpu_temp, gpu_load):
-        def fmt(v):
-            return "" if v is None else f"{v:.1f}"
-        return self.send_command("STAT:" + ",".join(fmt(v) for v in (cpu_temp, cpu_load, gpu_temp, gpu_load)))
+    def set_color_mode(self, value):
+        return self.send_command(f"COLORMODE:{value}")
+
+    def set_track(self, color):
+        return self.send_command(f"TRACK:{color.lstrip('#')}")
+
+    def send_stats(self, stats):
+        keys = ("cpu_temp", "cpu_load", "gpu_temp", "gpu_load", "liquid_temp", "pump_rpm", "fan_rpm")
+        values = [stats.get(k) for k in keys]
+        return self.send_command("STAT:" + ",".join("" if v is None else f"{v:.1f}" for v in values))
 
     def _expect(self, prefix, timeout):
         deadline = time.time() + timeout
-        while time.time() < deadline:
-            line = self.ser.readline().decode(errors="ignore").strip()
+        while (line := self._readline(self.ser, deadline)) is not None:
             if line.startswith(prefix):
                 return line
             if line.startswith("ERR"):
@@ -138,6 +152,7 @@ class ESP32Comms:
                 raise UploadError("Device not connected")
             try:
                 self.ser.reset_input_buffer()
+                self._pending = b""
                 self.ser.write(f"UPLOAD:{len(data)},{zlib.crc32(data):08X}\n".encode())
                 self._expect("READY", 5)
                 sent = 0
@@ -148,7 +163,7 @@ class ESP32Comms:
                     self._expect("ACK", 10)
                     if progress:
                         progress(sent / len(data))
-                self._expect("OK", 10)
+                self._expect("OK", 15)
             except (serial.SerialException, OSError) as e:
                 self.disconnect()
                 raise UploadError(str(e))

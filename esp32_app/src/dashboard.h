@@ -3,10 +3,10 @@
 #include <stdint.h>
 #include "gfx.h"
 
-enum View { VIEW_CPU, VIEW_GPU, VIEW_DUAL };
+enum View { VIEW_CPU, VIEW_GPU, VIEW_DUAL, VIEW_LIQUID };
 
 struct Stats {
-    float cpuTemp, cpuLoad, gpuTemp, gpuLoad;
+    float cpuTemp, cpuLoad, gpuTemp, gpuLoad, liquidTemp, pumpRpm, fanRpm;
 };
 
 struct Theme {
@@ -15,29 +15,36 @@ struct Theme {
 
 class Dashboard {
 public:
+    static const int VALUES = 7;
+
     Dashboard();
 
     void setStats(const Stats &stats, uint32_t nowMs);
     void setView(View v);
     void setTheme(const Theme &t);
     void setTrack(uint32_t rgb);
-    uint32_t getTrack() const { return track; }
+    void setTempColor(bool enabled);
     View getView() const { return view; }
     Theme getTheme() const { return theme; }
+    uint32_t getTrack() const { return track; }
+    bool getTempColor() const { return tempColor; }
 
     bool update(uint32_t nowMs);
     void render(Canvas &c);
     void renderMessage(Canvas &c, const char *title, const char *detail);
 
 private:
-    void renderSingle(Canvas &c, const char *label, int temp, int load);
+    bool valid(int i) const;
+    void drawGauge(Canvas &c, float start, float sweep, int dir, float fill);
+    void renderSingle(Canvas &c, const char *label, int value, float minV, float maxV, const char *sub1, const char *sub2);
     void renderDual(Canvas &c);
-    void renderGaugeHalf(Canvas &c, float start, int dir, float fill, int cx, const char *label, int temp, int load);
+    void renderHalf(Canvas &c, float start, int dir, int cx, const char *label, int temp, int load);
 
-    float target[4];
-    float shown[4];
+    float target[VALUES];
+    float shown[VALUES];
     bool online;
     bool dirty;
+    bool tempColor;
     uint32_t lastStatsMs;
     uint32_t lastUpdateMs;
     View view;

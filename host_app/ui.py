@@ -1,11 +1,12 @@
 import os
-from tkinter import colorchooser, filedialog
+from tkinter import colorchooser, filedialog, messagebox
 
 import customtkinter as ctk
 
 import config
 
 CUSTOM = "Custom"
+COLOR_MODE_LABELS = {"gradient": "Gradient", "temperature": "Follows temperature"}
 
 
 class SettingsWindow(ctk.CTkToplevel):
@@ -13,7 +14,7 @@ class SettingsWindow(ctk.CTkToplevel):
         super().__init__(master)
         self.app = app
         self.title("Cooler Screen")
-        self.geometry("420x520")
+        self.geometry("440x680")
         self.resizable(False, False)
         self.grid_columnconfigure(0, weight=1)
         self.protocol("WM_DELETE_WINDOW", self.withdraw)
@@ -37,19 +38,29 @@ class SettingsWindow(ctk.CTkToplevel):
         self.swatch_end.pack(side="right")
         self.swatch_start = ctk.CTkButton(row, text="", width=36, command=lambda: self._pick_color(0))
         self.swatch_start.pack(side="right", padx=8)
+        self.color_mode = ctk.CTkSegmentedButton(self, values=list(COLOR_MODE_LABELS.values()),
+                                                 command=self._on_color_mode)
+        self.color_mode.grid(row=6, column=0, padx=20, pady=(10, 0), sticky="ew")
 
-        self._section("Brightness", 6)
+        self._section("Brightness", 7)
         self.brightness = ctk.CTkSlider(self, from_=5, to=100, number_of_steps=19, command=self._on_brightness)
-        self.brightness.grid(row=7, column=0, padx=20, sticky="ew")
+        self.brightness.grid(row=8, column=0, padx=20, sticky="ew")
 
-        self._section("Animated GIF", 8)
+        self._section("Animated GIF", 9)
         self.upload_btn = ctk.CTkButton(self, text="Upload GIF...", command=self._upload)
-        self.upload_btn.grid(row=9, column=0, padx=20, sticky="w")
+        self.upload_btn.grid(row=10, column=0, padx=20, sticky="w")
         self.progress = ctk.CTkProgressBar(self)
         self.progress.set(0)
-        self.progress.grid(row=10, column=0, padx=20, pady=(10, 0), sticky="ew")
-        self.upload_status = ctk.CTkLabel(self, text="GIFs are cropped to 480x480 before upload.", anchor="w")
-        self.upload_status.grid(row=11, column=0, padx=20, sticky="ew")
+        self.progress.grid(row=11, column=0, padx=20, pady=(10, 0), sticky="ew")
+        self.upload_status = ctk.CTkLabel(self, text="GIFs are cropped to fit the round screen.", anchor="w",
+                                          wraplength=400, justify="left")
+        self.upload_status.grid(row=12, column=0, padx=20, sticky="ew")
+
+        self._section("System", 13)
+        self.autostart = ctk.CTkCheckBox(self, text="Start with Windows", command=self._on_autostart)
+        self.autostart.grid(row=14, column=0, padx=20, sticky="w")
+        if self.app.autostart_enabled():
+            self.autostart.select()
 
         self.refresh()
         self._poll_status()
@@ -65,6 +76,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.swatch_start.configure(fg_color=cfg["color_start"], hover_color=cfg["color_start"])
         self.swatch_end.configure(fg_color=cfg["color_end"], hover_color=cfg["color_end"])
         self.brightness.set(cfg["brightness"])
+        self.color_mode.set(COLOR_MODE_LABELS[cfg["color_mode"]])
 
     def _poll_status(self):
         if not self.winfo_exists():
@@ -92,6 +104,15 @@ class SettingsWindow(ctk.CTkToplevel):
         self.app.set_theme(CUSTOM, *colors)
         self.refresh()
 
+    def _on_color_mode(self, label):
+        self.app.set_color_mode(next(k for k, v in COLOR_MODE_LABELS.items() if v == label))
+
+    def _on_autostart(self):
+        error = self.app.set_autostart(bool(self.autostart.get()))
+        if error:
+            self.autostart.toggle()
+            messagebox.showerror("Cooler Screen", f"Couldn't change Start with Windows:\n{error}", parent=self)
+
     def _on_brightness(self, value):
         self.app.set_brightness(value)
 
@@ -104,9 +125,9 @@ class SettingsWindow(ctk.CTkToplevel):
         self.upload_status.configure(text=f"Preparing {os.path.basename(path)}...", text_color="orange")
         self.app.upload_gif(path, self._on_progress, self._on_upload_done)
 
-    def _on_progress(self, fraction):
+    def _on_progress(self, fraction, message=None):
         self.progress.set(fraction)
-        self.upload_status.configure(text=f"Uploading... {fraction * 100:.0f}%")
+        self.upload_status.configure(text=message or f"Uploading... {fraction * 100:.0f}%")
 
     def _on_upload_done(self, error):
         self.upload_btn.configure(state="normal")

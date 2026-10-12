@@ -24,12 +24,13 @@ static void writePPM(const std::string &path, const uint16_t *px, int w, int h) 
     fclose(f);
 }
 
-static void shot(const char *dir, const char *name, View view, Stats stats, bool online, Theme theme) {
+static void shot(const char *dir, const char *name, View view, Stats stats, bool online, Theme theme, bool tempColor = false) {
     std::vector<uint16_t> fb(480 * 480);
     Canvas canvas(fb.data(), 480, 480);
     Dashboard d;
     d.setTheme(theme);
     d.setView(view);
+    d.setTempColor(tempColor);
     uint32_t t = 1;
     for (int i = 0; i < 400; i++) {
         if (online) d.setStats(stats, t);
@@ -43,11 +44,11 @@ int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : ".";
     Theme kraken = {0x2D7CFF, 0xB22CFF};
     Theme heat = {0x00D0FF, 0xFF3B30};
-    shot(dir, "cpu", VIEW_CPU, {47.0f, 18.0f, 52.0f, 34.0f}, true, kraken);
-    shot(dir, "cpu_hot", VIEW_CPU, {88.0f, 97.0f, 52.0f, 34.0f}, true, heat);
-    shot(dir, "gpu", VIEW_GPU, {47.0f, 18.0f, 64.0f, 71.0f}, true, kraken);
-    shot(dir, "dual", VIEW_DUAL, {47.0f, 18.0f, 64.0f, 71.0f}, true, kraken);
-    shot(dir, "offline", VIEW_CPU, {NAN, NAN, NAN, NAN}, false, kraken);
-    shot(dir, "dual_nogpu", VIEW_DUAL, {61.0f, 40.0f, NAN, NAN}, true, heat);
+    shot(dir, "cpu", VIEW_CPU, {47, 18, 52, 34, 31, 2400, 1150}, true, kraken);
+    shot(dir, "cpu_hot", VIEW_CPU, {88, 97, 52, 34, NAN, NAN, NAN}, true, heat);
+    shot(dir, "cpu_tempcolor", VIEW_CPU, {78, 60, 52, 34, NAN, NAN, NAN}, true, heat, true);
+    shot(dir, "dual", VIEW_DUAL, {47, 18, 64, 71, NAN, NAN, NAN}, true, kraken);
+    shot(dir, "liquid", VIEW_LIQUID, {47, 18, 64, 71, 33, 2400, 1150}, true, kraken);
+    shot(dir, "offline", VIEW_CPU, {NAN, NAN, NAN, NAN, NAN, NAN, NAN}, false, kraken);
     return 0;
 }

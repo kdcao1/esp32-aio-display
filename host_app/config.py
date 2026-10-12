@@ -9,17 +9,23 @@ THEMES = {
     "Mono": ("#E6E6EB", "#E6E6EB"),
 }
 
-MODES = ("CPU", "GPU", "DUAL", "GIF")
-MODE_LABELS = {"CPU": "CPU", "GPU": "GPU", "DUAL": "CPU + GPU", "GIF": "GIF"}
+MODES = ("CPU", "GPU", "DUAL", "LIQUID", "GIF")
+MODE_LABELS = {"CPU": "CPU", "GPU": "GPU", "DUAL": "CPU + GPU", "LIQUID": "Liquid", "GIF": "GIF"}
+COLOR_MODES = {"gradient": "GRADIENT", "temperature": "TEMP"}
 
 DEFAULTS = {
     "mode": "CPU",
     "theme": "Kraken",
     "color_start": THEMES["Kraken"][0],
     "color_end": THEMES["Kraken"][1],
+    "color_mode": "gradient",
+    "track_color": "#1C1C24",
     "brightness": 100,
     "port": None,
     "interval": 1.0,
+    "liquid_sensor": "",
+    "pump_sensor": "",
+    "fan_sensor": "",
 }
 
 
@@ -37,6 +43,8 @@ def load():
         pass
     if cfg["mode"] not in MODES:
         cfg["mode"] = DEFAULTS["mode"]
+    if cfg["color_mode"] not in COLOR_MODES:
+        cfg["color_mode"] = DEFAULTS["color_mode"]
     return cfg
 
 

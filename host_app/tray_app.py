@@ -7,11 +7,12 @@ import time
 
 import customtkinter as ctk
 import pystray
-from PIL import Image, ImageDraw
 
+import autostart
 import config
 from comms import ESP32Comms, UploadError
-from gif_tools import prepare_gif
+from gif_tools import FULL_SIZE, HALF_SIZE, prepare_gif
+from icon import create_icon
 from monitor import HardwareMonitor, is_admin
 from ui import SettingsWindow
 
@@ -19,17 +20,11 @@ from ui import SettingsWindow
 def relaunch_as_admin():
     if os.name != "nt" or is_admin() or "--no-elevate" in sys.argv:
         return False
-    params = " ".join(f'"{a}"' for a in [os.path.abspath(sys.argv[0]), *sys.argv[1:], "--no-elevate"])
+    args = [*sys.argv[1:], "--no-elevate"]
+    if not getattr(sys, "frozen", False):
+        args.insert(0, os.path.abspath(sys.argv[0]))
+    params = " ".join(f'"{a}"' for a in args)
     return ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1) > 32
-
-
-def create_icon():
-    image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    draw.ellipse([2, 2, 62, 62], fill=(10, 10, 14, 255))
-    draw.arc([8, 8, 56, 56], 130, 410, fill=(40, 40, 50, 255), width=7)
-    draw.arc([8, 8, 56, 56], 130, 320, fill=(45, 124, 255, 255), width=7)
-    return image
 
 
 class App:
@@ -94,22 +89,55 @@ class App:
         self.save()
         self.comms.set_brightness(value)
 
+    def set_color_mode(self, value):
+        self.cfg["color_mode"] = value
+        self.save()
+        self.comms.set_color_mode(config.COLOR_MODES[value])
+
+    def autostart_enabled(self):
+        try:
+            return autostart.is_enabled()
+        except OSError:
+            return False
+
+    def set_autostart(self, enabled):
+        try:
+            autostart.enable() if enabled else autostart.disable()
+            return None
+        except OSError as e:
+            return str(e)
+
     def push_settings(self):
         self.comms.set_theme(self.cfg["color_start"], self.cfg["color_end"])
+        self.comms.set_color_mode(config.COLOR_MODES[self.cfg["color_mode"]])
+        self.comms.set_track(self.cfg["track_color"])
         self.comms.set_brightness(self.cfg["brightness"])
         self.comms.set_mode(self.cfg["mode"])
 
     def upload_gif(self, path, on_progress, on_done):
+        def report(fraction, message=None):
+            self.call_soon(lambda: on_progress(fraction, message))
+
+        def send(size):
+            report(0, f"Preparing {size}x{size} GIF...")
+            data = prepare_gif(path, size)
+            report(0, f"Uploading {len(data) / 1_000_000:.1f} MB...")
+            self.comms.upload_gif(data, report)
+            return data
+
         def work():
             try:
-                data = prepare_gif(path)
-                self.comms.upload_gif(data, lambda p: self.call_soon(lambda: on_progress(p)))
+                try:
+                    send(FULL_SIZE)
+                except UploadError as e:
+                    if not str(e).startswith("ERR SIZE"):
+                        raise
+                    send(HALF_SIZE)
                 self.call_soon(lambda: on_done(None))
             except (UploadError, OSError, ValueError) as e:
                 msg = str(e)
                 if msg.startswith("ERR SIZE"):
-                    limit = int(msg.split()[-1]) / 1_000_000
-                    msg = f"GIF too large ({len(data) / 1_000_000:.1f} MB, max {limit:.1f} MB)"
+                    msg = f"GIF too large even at {HALF_SIZE}x{HALF_SIZE} (device has {int(msg.split()[-1]) / 1e6:.1f} MB)"
                 self.call_soon(lambda: on_done(msg))
 
         threading.Thread(target=work, daemon=True).start()
@@ -126,7 +154,7 @@ class App:
 
     def worker(self):
         try:
-            self.monitor = HardwareMonitor()
+            self.monitor = HardwareMonitor({k: self.cfg[k] for k in ("liquid_sensor", "pump_sensor", "fan_sensor")})
         except Exception as e:
             self.monitor_error = str(e)
             print(f"Monitor init failed: {e}")
@@ -142,8 +170,7 @@ class App:
                         self.stats = self.monitor.read()
                     except Exception as e:
                         print(f"Sensor read failed: {e}")
-                    self.comms.send_stats(self.stats.get("cpu_temp"), self.stats.get("cpu_load"),
-                                          self.stats.get("gpu_temp"), self.stats.get("gpu_load"))
+                    self.comms.send_stats(self.stats)
             was_connected = self.comms.connected
             self.icon.title = f"Cooler Screen - {self.status_text()[0]}"
             time.sleep(max(0.1, self.cfg["interval"] - (time.time() - started)))
