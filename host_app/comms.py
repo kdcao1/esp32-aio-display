@@ -190,8 +190,8 @@ class ESP32Comms:
         info = {"free": 0, "storage": "FLASH", "current": None, "cycle": 0}
         for line in lines:
             parts = line.split()
-            if parts[0] == "GIF" and len(parts) == 3:
-                gifs.append((parts[1], int(parts[2])))
+            if parts[0] == "GIF" and len(parts) >= 3:
+                gifs.append((parts[1], int(parts[2]), parts[3] if len(parts) > 3 else "H"))
             elif parts[0] == "END" and len(parts) >= 5:
                 info.update(free=int(parts[1]), storage=parts[2],
                             current=None if parts[3] == "-" else parts[3], cycle=int(parts[4]))
@@ -213,10 +213,13 @@ class ESP32Comms:
     def gif_delete(self, name):
         return self._query(f"GIFDEL:{name}", "DONE") is not None
 
+    def set_gif_quality(self, smooth):
+        return self.send_command(f"QUALITY:{'SMOOTH' if smooth else 'SHARP'}")
+
     def set_gif_cycle(self, seconds):
         return self.send_command(f"GIFCYCLE:{int(seconds)}")
 
-    def upload_gif(self, data, name, progress=None):
+    def upload_gif(self, data, name, progress=None, smooth=False):
         with self.lock:
             if not self.connected:
                 raise UploadError("Device not connected")
@@ -224,7 +227,7 @@ class ESP32Comms:
             try:
                 self.ser.reset_input_buffer()
                 self._pending = b""
-                self.ser.write(f"UPLOAD:{len(data)},{zlib.crc32(data):08X},{name}\n".encode())
+                self.ser.write(f"UPLOAD:{len(data)},{zlib.crc32(data):08X},{name},{'S' if smooth else 'H'}\n".encode())
                 self._expect("READY", 5)
                 sent = 0
                 while sent < len(data):

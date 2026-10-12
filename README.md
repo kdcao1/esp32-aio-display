@@ -33,7 +33,7 @@ To build a standalone app instead, run `build_exe.bat`; it produces `dist\Cooler
 
 Sensors come from LibreHardwareMonitor 0.9.6 (`host_app/lhm`), which needs the [PawnIO](https://pawnio.eu) driver installed (FanControl and recent LibreHardwareMonitor installs already include it). The app asks for administrator rights, which Windows requires for CPU temperatures; pass `--no-elevate` to skip. Settings are stored in `%APPDATA%\CoolerScreen\config.json`; set `"port"` there to pin a COM port instead of auto-detecting.
 
-GIFs live in a library on the microSD card (falls back to internal flash without a card) and are managed from the **GIF library** tab: upload, play, delete, and cycle through them on a timer. Uploads are cropped to 480x480 (**Sharp**) or 240x240 scaled 2x (**Smooth**, about 4x faster to decode), capped at 300 frames and 5 MB each.
+GIFs live in a library on the microSD card (falls back to internal flash without a card) and are managed from the **GIF library** tab: upload, play, delete, and cycle through them on a timer. Every upload stores two copies: 480x480 (**Sharp**) and 240x240 scaled 2x (**Smooth**, about 4x faster to decode); **Playback quality** switches between them instantly. Copies are capped at 300 frames and 5 MB (a GIF too large for Sharp keeps only its Smooth copy).
 
 Liquid temperature, pump and fan RPM are detected automatically by sensor name. If the wrong sensor is picked (or none), run `venv\Scripts\python monitor.py --list` as administrator and put part of the right sensor's name into `liquid_sensor`, `pump_sensor` or `fan_sensor` in the config file.
 
@@ -43,15 +43,16 @@ Newline-terminated commands:
 
 | Command | Description |
 | --- | --- |
-| `PING` | Replies `PONG COOLERSCREEN 5` |
+| `PING` | Replies `PONG COOLERSCREEN 6` |
 | `STAT:<cpuT>,<cpuLoad>,<gpuT>,<gpuLoad>,<liquidT>,<pumpRpm>,<fanRpm>` | Empty field = unavailable |
 | `MODE:CPU\|GPU\|DUAL\|LIQUID\|GIF` | |
 | `COLORMODE:GRADIENT\|TEMP` | Gradient along the ring, or one color picked by temperature |
 | `THEME:<RRGGBB>,<RRGGBB>` | Ring gradient |
 | `BRIGHT:<5-100>` | |
 | `TRACK:<RRGGBB>` | Gauge track color |
-| `UPLOAD:<size>,<crc32 hex>,<name>` | Device replies `READY`. Each 4096-byte chunk is followed by its CRC32 (4 bytes, little-endian); the device replies `ACK <n>` or `NAK <n> <reason>` (resend the chunk). The file is buffered in PSRAM and saved as `/gifs/<name>.gif` at the end, then `OK <resends>` or `ERR <reason>` |
-| `GIFLIST` | `GIF <name> <bytes>` per file, then `END <free bytes> SD\|FLASH <current\|-> <cycle seconds>` |
+| `UPLOAD:<size>,<crc32 hex>,<name>,H\|S` | Device replies `READY`. Each 4096-byte chunk is followed by its CRC32 (4 bytes, little-endian); the device replies `ACK <n>` or `NAK <n> <reason>` (resend the chunk). The file is buffered in PSRAM and saved as `/gifs/<name>.gif` (H, sharp) or `/gifs240/<name>.gif` (S, smooth) at the end, then `OK <resends>` or `ERR <reason>` |
+| `GIFLIST` | `GIF <name> <bytes> <H\|S\|HS>` per GIF, then `END <free bytes> SD\|FLASH <current\|-> <cycle seconds>` |
 | `GIFPLAY:<name>` | Switch to GIF mode playing that file |
 | `GIFDEL:<name>` | Delete a GIF; replies `DONE` |
+| `QUALITY:SHARP\|SMOOTH` | Which copy to play |
 | `GIFCYCLE:<seconds>` | Rotate through the library; `0` turns it off |

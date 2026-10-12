@@ -6,7 +6,7 @@
 #include "dashboard.h"
 #include "storage.h"
 
-#define PROTOCOL_VERSION 5
+#define PROTOCOL_VERSION 6
 #define MAX_GIF_BYTES (5 * 1024 * 1024)
 #define MAX_GIFS 64
 #define UPLOAD_CHUNK 4096
@@ -29,6 +29,7 @@ static AnimatedGIF gif;
 static uint8_t *gifData = nullptr;
 static uint16_t *gifTarget = nullptr;
 static char currentGif[41] = "";
+static bool smoothPref = false;
 static uint32_t cycleSec = 0, cycleAtMs = 0;
 static uint32_t statFrames = 0, statDecodeMs = 0, statAtMs = 0;
 static uint32_t lastRenderMs = 0;
@@ -96,16 +97,15 @@ static void closeGif() {
 }
 
 static bool pickGif(int offset) {
-    static char names[MAX_GIFS][41];
-    static size_t sizes[MAX_GIFS];
-    int count = listGifs(names, sizes, MAX_GIFS);
+    static GifEntry entries[MAX_GIFS];
+    int count = listGifs(entries, MAX_GIFS);
     if (!count) return false;
     int index = -1;
     for (int i = 0; i < count; i++) {
-        if (!strcmp(names[i], currentGif)) index = i;
+        if (!strcmp(entries[i].name, currentGif)) index = i;
     }
     index = index < 0 ? 0 : (index + offset + count) % count;
-    strcpy(currentGif, names[index]);
+    strcpy(currentGif, entries[index].name);
     return true;
 }
 
@@ -117,8 +117,10 @@ static void openGif() {
             return;
         }
     }
+    uint8_t variants = gifVariants(currentGif);
+    bool smooth = smoothPref ? (variants & GIF_SMOOTH) : !(variants & GIF_SHARP);
     char path[64];
-    gifPath(currentGif, path, sizeof(path));
+    gifPath(currentGif, smooth, path, sizeof(path));
     File f = gifFs().open(path, "r");
     size_t size = f ? f.size() : 0;
     gifData = size ? (uint8_t *)heap_caps_malloc(size, MALLOC_CAP_SPIRAM) : nullptr;
@@ -170,6 +172,7 @@ static void writeSettings() {
     prefs.putUChar("bright", (uint8_t)brightness);
     prefs.putString("gif", currentGif);
     prefs.putUInt("cycle", cycleSec);
+    prefs.putBool("smooth", smoothPref);
     resyncDisplay();
 }
 
@@ -219,10 +222,13 @@ static void handleUpload(char *args) {
     long size = strtol(args, &args, 10);
     uint32_t expected = (*args == ',') ? strtoul(args + 1, &args, 16) : 0;
     char name[41];
+    char *variant = (*args == ',') ? strchr(args + 1, ',') : nullptr;
+    if (variant) *variant++ = 0;
     if (*args != ',' || !sanitizeName(args + 1, name, sizeof(name))) strcpy(name, "gif");
+    bool smooth = variant && toupper(*variant) == 'S';
 
     char path[64];
-    gifPath(name, path, sizeof(path));
+    gifPath(name, smooth, path, sizeof(path));
     long existing = 0;
     if (File old = gifFs().open(path, "r")) {
         existing = old.size();
@@ -343,10 +349,13 @@ static void handleCommand(char *cmd) {
     } else if (!strcmp(cmd, "UPLOAD")) {
         handleUpload(arg);
     } else if (!strcmp(cmd, "GIFLIST")) {
-        static char names[MAX_GIFS][41];
-        static size_t sizes[MAX_GIFS];
-        int count = listGifs(names, sizes, MAX_GIFS);
-        for (int i = 0; i < count; i++) Serial.printf("GIF %s %u\n", names[i], (unsigned)sizes[i]);
+        static GifEntry entries[MAX_GIFS];
+        int count = listGifs(entries, MAX_GIFS);
+        for (int i = 0; i < count; i++) {
+            const GifEntry &e = entries[i];
+            Serial.printf("GIF %s %u %s%s\n", e.name, (unsigned)e.size, e.variants & GIF_SHARP ? "H" : "",
+                          e.variants & GIF_SMOOTH ? "S" : "");
+        }
         Serial.printf("END %llu %s %s %u\n", freeBytes(), onSdCard() ? "SD" : "FLASH", currentGif[0] ? currentGif : "-",
                       (unsigned)cycleSec);
     } else if (!strcmp(cmd, "GIFPLAY")) {
@@ -361,7 +370,9 @@ static void handleCommand(char *cmd) {
         if (sanitizeName(arg, name, sizeof(name))) {
             bool playing = !strcmp(name, currentGif);
             if (playing) closeGif();
-            gifPath(name, path, sizeof(path));
+            gifPath(name, false, path, sizeof(path));
+            gifFs().remove(path);
+            gifPath(name, true, path, sizeof(path));
             gifFs().remove(path);
             if (playing) {
                 currentGif[0] = 0;
@@ -370,6 +381,13 @@ static void handleCommand(char *cmd) {
             saveSettings();
         }
         Serial.println("DONE");
+    } else if (!strcmp(cmd, "QUALITY")) {
+        bool smooth = !strcmp(arg, "SMOOTH");
+        if (smooth != smoothPref) {
+            smoothPref = smooth;
+            if (mode == MODE_GIF) applyMode(MODE_GIF);
+            saveSettings();
+        }
     } else if (!strcmp(cmd, "SDINFO")) {
         Serial.printf("SDINFO %s\n", sdStatus());
     } else if (!strcmp(cmd, "SDFORMAT")) {
@@ -423,6 +441,7 @@ void setup() {
     dash.setTempColor(prefs.getBool("tempcolor", false));
     prefs.getString("gif", currentGif, sizeof(currentGif));
     cycleSec = prefs.getUInt("cycle", 0);
+    smoothPref = prefs.getBool("smooth", false);
     setBrightness(brightness);
     applyMode((Mode)constrain(prefs.getUChar("mode", MODE_CPU), MODE_CPU, MODE_LIQUID));
 }

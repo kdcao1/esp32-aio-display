@@ -118,7 +118,7 @@ class SettingsWindow(ctk.CTkToplevel):
         options = ctk.CTkFrame(tab, fg_color="transparent")
         options.grid(row=3, column=0, padx=8, pady=(10, 0), sticky="ew")
         options.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(options, text="Upload quality").grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(options, text="Playback quality").grid(row=0, column=0, sticky="w")
         self.quality = ctk.CTkSegmentedButton(options, values=list(QUALITY_LABELS.values()), command=self._on_quality)
         self.quality.grid(row=0, column=1, padx=(10, 0), sticky="ew")
         ctk.CTkLabel(options, text="Cycle GIFs every").grid(row=1, column=0, pady=(8, 0), sticky="w")
@@ -179,11 +179,12 @@ class SettingsWindow(ctk.CTkToplevel):
             self.format_btn.pack(side="right")
         else:
             self.format_btn.pack_forget()
-        if self.selected not in {name for name, _ in info["gifs"]}:
+        if self.selected not in {g[0] for g in info["gifs"]}:
             self.selected = info["current"]
-        for i, (name, size) in enumerate(info["gifs"]):
+        for i, (name, size, variants) in enumerate(info["gifs"]):
             playing = " (playing)" if name == info["current"] and self.app.cfg["mode"] == "GIF" else ""
-            button = ctk.CTkButton(self.gif_list, text=f"{name}{playing}    {format_bytes(size)}", anchor="w",
+            only = {"H": "  - sharp only", "S": "  - smooth only"}.get(variants, "")
+            button = ctk.CTkButton(self.gif_list, text=f"{name}{playing}    {format_bytes(size)}{only}", anchor="w",
                                    fg_color="transparent", text_color=("gray10", "gray90"),
                                    command=lambda n=name: self._select(n))
             button.grid(row=i, column=0, pady=1, sticky="ew")

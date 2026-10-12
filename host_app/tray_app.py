@@ -127,6 +127,7 @@ class App:
         self.comms.set_color_mode(config.COLOR_MODES[self.cfg["color_mode"]])
         self.comms.set_track(self.cfg["track_color"])
         self.comms.set_gif_cycle(self.cfg["gif_cycle"])
+        self.comms.set_gif_quality(self.cfg["gif_quality"] == "smooth")
         self.comms.set_brightness(self.cfg["brightness"])
         self.comms.set_mode(self.cfg["mode"])
 
@@ -161,6 +162,7 @@ class App:
     def set_gif_quality(self, value):
         self.cfg["gif_quality"] = value
         self.save()
+        self.comms.set_gif_quality(value == "smooth")
 
     def upload_gif(self, path, on_progress, on_done):
         name = gif_name(path)
@@ -168,23 +170,21 @@ class App:
         def report(fraction, message=None):
             self.call_soon(lambda: on_progress(fraction, message))
 
-        def send(size):
-            report(0, f"Preparing {size}x{size} GIF...")
+        def send(size, label, step):
+            report(0, f"{step} Preparing {label} copy...")
             data = prepare_gif(path, size)
-            report(0, f"Uploading {len(data) / 1_000_000:.1f} MB...")
-            self.comms.upload_gif(data, name, report)
+            report(0, f"{step} Uploading {label} copy ({len(data) / 1_000_000:.1f} MB)...")
+            self.comms.upload_gif(data, name, lambda p: report(p, f"{step} Uploading {label} copy... {p * 100:.0f}%"),
+                                  smooth=size == HALF_SIZE)
 
         def work():
             try:
-                if self.cfg["gif_quality"] == "smooth":
-                    send(HALF_SIZE)
-                else:
-                    try:
-                        send(FULL_SIZE)
-                    except UploadError as e:
-                        if not str(e).startswith("ERR SIZE"):
-                            raise
-                        send(HALF_SIZE)
+                try:
+                    send(FULL_SIZE, "sharp", "1/2")
+                except UploadError as e:
+                    if not str(e).startswith("ERR SIZE"):
+                        raise
+                send(HALF_SIZE, "smooth", "2/2")
                 self.cfg["mode"] = "GIF"
                 self.save()
                 return None

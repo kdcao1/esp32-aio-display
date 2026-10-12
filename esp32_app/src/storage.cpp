@@ -11,6 +11,7 @@
 
 #define SD_MOUNT "/sdcard"
 #define GIF_DIR "/gifs"
+#define GIF_DIR_SMOOTH "/gifs240"
 
 class SdFs : public fs::FS {
 public:
@@ -112,6 +113,7 @@ bool initStorage() {
     startSd(false);
     Serial.printf("storage: %s\n", sdOk ? "SD card" : "internal flash");
     if (!gifFs().exists(GIF_DIR)) gifFs().mkdir(GIF_DIR);
+    if (!gifFs().exists(GIF_DIR_SMOOTH)) gifFs().mkdir(GIF_DIR_SMOOTH);
     if (sdOk) {
         setBacklight(false);
         migrateFromFlash();
@@ -124,6 +126,7 @@ bool initStorage() {
 bool formatSd() {
     if (!sdOk) startSd(true);
     if (sdOk && !gifFs().exists(GIF_DIR)) gifFs().mkdir(GIF_DIR);
+    if (sdOk && !gifFs().exists(GIF_DIR_SMOOTH)) gifFs().mkdir(GIF_DIR_SMOOTH);
     if (sdOk) {
         setBacklight(false);
         migrateFromFlash();
@@ -162,42 +165,62 @@ bool sanitizeName(const char *in, char *out, size_t n) {
     return len > 0;
 }
 
-void gifPath(const char *name, char *out, size_t n) {
-    snprintf(out, n, GIF_DIR "/%s.gif", name);
+void gifPath(const char *name, bool smooth, char *out, size_t n) {
+    snprintf(out, n, "%s/%s.gif", smooth ? GIF_DIR_SMOOTH : GIF_DIR, name);
+}
+
+uint8_t gifVariants(const char *name) {
+    char path[64];
+    uint8_t variants = 0;
+    gifPath(name, false, path, sizeof(path));
+    if (gifFs().exists(path)) variants |= GIF_SHARP;
+    gifPath(name, true, path, sizeof(path));
+    if (gifFs().exists(path)) variants |= GIF_SMOOTH;
+    return variants;
 }
 
 bool gifExists(const char *name) {
-    char path[64];
-    gifPath(name, path, sizeof(path));
-    return gifFs().exists(path);
+    return gifVariants(name) != 0;
 }
 
-int listGifs(char names[][41], size_t *sizes, int max) {
-    File dir = gifFs().open(GIF_DIR);
-    int count = 0;
-    if (!dir || !dir.isDirectory()) return 0;
-    for (File f = dir.openNextFile(); f && count < max; f = dir.openNextFile()) {
+static int scanDir(const char *dirPath, uint8_t variant, GifEntry *entries, int count, int max) {
+    File dir = gifFs().open(dirPath);
+    if (!dir || !dir.isDirectory()) return count;
+    for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
         const char *name = f.name();
         const char *slash = strrchr(name, '/');
         if (slash) name = slash + 1;
         size_t len = strlen(name);
         if (!f.isDirectory() && len > 4 && len - 4 <= 40 && !strcasecmp(name + len - 4, ".gif")) {
-            memcpy(names[count], name, len - 4);
-            names[count][len - 4] = 0;
-            sizes[count] = f.size();
-            count++;
+            char base[41];
+            memcpy(base, name, len - 4);
+            base[len - 4] = 0;
+            int i = 0;
+            while (i < count && strcmp(entries[i].name, base)) i++;
+            if (i == count && count < max) {
+                strcpy(entries[count].name, base);
+                entries[count].size = 0;
+                entries[count].variants = 0;
+                count++;
+            }
+            if (i < count) {
+                entries[i].size += f.size();
+                entries[i].variants |= variant;
+            }
         }
         f.close();
     }
+    return count;
+}
+
+int listGifs(GifEntry *entries, int max) {
+    int count = scanDir(GIF_DIR, GIF_SHARP, entries, 0, max);
+    count = scanDir(GIF_DIR_SMOOTH, GIF_SMOOTH, entries, count, max);
     for (int i = 1; i < count; i++) {
-        for (int j = i; j > 0 && strcmp(names[j - 1], names[j]) > 0; j--) {
-            char tmp[41];
-            strcpy(tmp, names[j]);
-            strcpy(names[j], names[j - 1]);
-            strcpy(names[j - 1], tmp);
-            size_t t = sizes[j];
-            sizes[j] = sizes[j - 1];
-            sizes[j - 1] = t;
+        for (int j = i; j > 0 && strcmp(entries[j - 1].name, entries[j].name) > 0; j--) {
+            GifEntry tmp = entries[j];
+            entries[j] = entries[j - 1];
+            entries[j - 1] = tmp;
         }
     }
     return count;
