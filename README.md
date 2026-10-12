@@ -31,7 +31,7 @@ venv\Scripts\pythonw tray_app.py
 
 To build a standalone app instead, run `build_exe.bat`; it produces `dist\CoolerScreen\CoolerScreen.exe` (no Python needed on the target PC, copy the whole `CoolerScreen` folder). Tick **Start with Windows** in Settings to launch it at logon via Task Scheduler with admin rights, without a UAC prompt.
 
-The app asks for administrator rights (needed by LibreHardwareMonitor for CPU temperatures); pass `--no-elevate` to skip. Settings are stored in `%APPDATA%\CoolerScreen\config.json`; set `"port"` there to pin a COM port instead of auto-detecting.
+Sensors come from LibreHardwareMonitor 0.9.6 (`host_app/lhm`), which needs the [PawnIO](https://pawnio.eu) driver installed (FanControl and recent LibreHardwareMonitor installs already include it). The app asks for administrator rights, which Windows requires for CPU temperatures; pass `--no-elevate` to skip. Settings are stored in `%APPDATA%\CoolerScreen\config.json`; set `"port"` there to pin a COM port instead of auto-detecting.
 
 GIFs live in a library on the microSD card (falls back to internal flash without a card) and are managed from the **GIF library** tab: upload, play, delete, and cycle through them on a timer. Uploads are cropped to 480x480 (**Sharp**) or 240x240 scaled 2x (**Smooth**, about 4x faster to decode), capped at 300 frames and 5 MB each.
 

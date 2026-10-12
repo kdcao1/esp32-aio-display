@@ -40,13 +40,11 @@ class Reading:
 class HardwareMonitor:
     def __init__(self, overrides=None):
         self.overrides = overrides or {}
-        base = os.path.dirname(os.path.abspath(__file__))
-        dll_path = os.path.join(base, "LibreHardwareMonitorLib.dll")
+        lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lhm")
+        dll_path = os.path.join(lib_dir, "LibreHardwareMonitorLib.dll")
         if not os.path.exists(dll_path):
             raise FileNotFoundError(f"Could not find {dll_path}")
-        hid_path = os.path.join(base, "HidSharp.dll")
-        if os.path.exists(hid_path):
-            clr.AddReference(hid_path)
+        self._install_resolver(lib_dir)
         clr.AddReference(dll_path)
 
         from LibreHardwareMonitor.Hardware import Computer
@@ -56,6 +54,18 @@ class HardwareMonitor:
         except Exception as e:
             print(f"Controller sensors unavailable: {e}")
             self.computer = self._open(Computer, controllers=False)
+
+    @staticmethod
+    def _install_resolver(lib_dir):
+        from System import AppDomain, ResolveEventHandler
+        from System.Reflection import Assembly, AssemblyName
+
+        def resolve(sender, args):
+            path = os.path.join(lib_dir, AssemblyName(args.Name).Name + ".dll")
+            return Assembly.LoadFrom(path) if os.path.exists(path) else None
+
+        HardwareMonitor._resolver = ResolveEventHandler(resolve)
+        AppDomain.CurrentDomain.AssemblyResolve += HardwareMonitor._resolver
 
     @staticmethod
     def _open(computer_class, controllers):
