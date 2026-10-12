@@ -26,6 +26,7 @@ static bool gifOpen = false;
 static int gifOffX = 0, gifOffY = 0;
 static uint32_t nextFrameMs = 0;
 
+static const char *fatalError = nullptr;
 static char line[256];
 static size_t lineLen = 0;
 
@@ -253,11 +254,16 @@ void setup() {
     Serial.setRxBufferSize(UPLOAD_CHUNK * 2);
     Serial.begin(921600);
     Serial.setTimeout(50);
+    for (uint32_t start = millis(); !Serial && millis() - start < 3000;) delay(10);
+    Serial.setDebugOutput(true);
+
+    Serial.printf("CoolerScreen protocol %d\n", PROTOCOL_VERSION);
+    Serial.printf("chip %s rev %d, flash %u, PSRAM %u (free %u)\n", ESP.getChipModel(), ESP.getChipRevision(),
+                  ESP.getFlashChipSize(), ESP.getPsramSize(), ESP.getFreePsram());
 
     if (!LittleFS.begin(true)) Serial.println("ERR LittleFS mount failed");
-    if (!initDisplay()) {
-        while (true) delay(1000);
-    }
+    fatalError = initDisplay();
+    if (fatalError) return;
     canvas = new Canvas(frameBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT);
     gif.begin(GIF_PALETTE_RGB565_LE);
 
@@ -269,6 +275,11 @@ void setup() {
 }
 
 void loop() {
+    if (fatalError) {
+        Serial.printf("ERR %s\n", fatalError);
+        delay(2000);
+        return;
+    }
     processSerial();
     uint32_t now = millis();
 
