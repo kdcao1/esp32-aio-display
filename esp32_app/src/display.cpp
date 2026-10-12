@@ -1,8 +1,6 @@
 #include "display.h"
 
 #include <esp_display_panel.hpp>
-#include <board/esp_panel_board_default_config.hpp>
-#include <board/esp_panel_board_default_config.hpp>
 
 using namespace esp_panel::board;
 
@@ -14,9 +12,7 @@ const char *initDisplay() {
     if (!canvas) return "no PSRAM for frame buffer";
     memset(canvas, 0, SCREEN_WIDTH * SCREEN_HEIGHT * 2);
 
-    BoardConfig config = ESP_PANEL_BOARD_DEFAULT_CONFIG;
-    config.touch.reset();
-    board = new Board(config);
+    board = new Board();
     Serial.println("display: init");
     if (!board->init()) return "board init failed";
     Serial.println("display: begin");
