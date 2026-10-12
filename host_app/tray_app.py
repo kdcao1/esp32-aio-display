@@ -196,6 +196,25 @@ class App:
 
         self.run_async(work, on_done)
 
+    def sensor_groups(self):
+        groups = set(MODE_SENSORS.get(self.cfg["mode"], set()))
+        if self.cfg["mode"] == "CPU" and not self.cfg["show_rpm"]:
+            groups.discard("board")
+        return groups
+
+    def visible_stats(self):
+        stats = dict(self.stats)
+        if not self.cfg["show_load"]:
+            stats["cpu_load"] = stats["gpu_load"] = None
+        if not self.cfg["show_rpm"]:
+            stats["pump_rpm"] = stats["fan_rpm"] = None
+        return stats
+
+    def set_detail(self, key, value):
+        self.cfg[key] = bool(value)
+        self.save()
+        self.comms.send_stats(self.visible_stats())
+
     def status_text(self):
         if not self.comms.connected:
             return "Searching for device...", "orange"
@@ -219,13 +238,13 @@ class App:
             if self.comms.ensure_connected():
                 if not was_connected:
                     self.push_settings()
-                groups = MODE_SENSORS.get(self.cfg["mode"], set())
+                groups = self.sensor_groups()
                 if self.monitor and groups:
                     try:
                         self.stats = self.monitor.read(groups)
                     except Exception as e:
                         print(f"Sensor read failed: {e}")
-                    self.comms.send_stats(self.stats)
+                    self.comms.send_stats(self.visible_stats())
             was_connected = self.comms.connected
             self.icon.title = f"Cooler Screen - {self.status_text()[0]}"
             time.sleep(max(0.1, self.cfg["interval"] - (time.time() - started)))

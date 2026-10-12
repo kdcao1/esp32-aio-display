@@ -74,9 +74,19 @@ class SettingsWindow(ctk.CTkToplevel):
         self.brightness = ctk.CTkSlider(tab, from_=5, to=100, number_of_steps=19, command=self._on_brightness)
         self.brightness.grid(row=6, column=0, padx=8, sticky="ew")
 
-        self._section(tab, "System", 7)
+        self._section(tab, "Details", 7)
+        details = ctk.CTkFrame(tab, fg_color="transparent")
+        details.grid(row=8, column=0, padx=8, sticky="ew")
+        self.show_load = ctk.CTkCheckBox(details, text="Show load %",
+                                         command=lambda: self.app.set_detail("show_load", self.show_load.get()))
+        self.show_load.pack(side="left")
+        self.show_rpm = ctk.CTkCheckBox(details, text="Show fan / pump RPM",
+                                        command=lambda: self.app.set_detail("show_rpm", self.show_rpm.get()))
+        self.show_rpm.pack(side="left", padx=20)
+
+        self._section(tab, "System", 9)
         self.autostart = ctk.CTkCheckBox(tab, text="Start with Windows", command=self._on_autostart)
-        self.autostart.grid(row=8, column=0, padx=8, sticky="w")
+        self.autostart.grid(row=10, column=0, padx=8, sticky="w")
         if self.app.autostart_enabled():
             self.autostart.select()
 
@@ -131,6 +141,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self.brightness.set(cfg["brightness"])
         self.color_mode.set(COLOR_MODE_LABELS[cfg["color_mode"]])
         self.quality.set(QUALITY_LABELS[cfg["gif_quality"]])
+        for box, key in ((self.show_load, "show_load"), (self.show_rpm, "show_rpm")):
+            box.select() if cfg[key] else box.deselect()
         self.cycle.set(CYCLE_LABELS.get(cfg["gif_cycle"], "Off"))
 
     def _poll_status(self):
