@@ -17,6 +17,21 @@ from monitor import HardwareMonitor, is_admin
 from ui import SettingsWindow
 
 
+MODE_SENSORS = {
+    "CPU": {"cpu", "board"},
+    "GPU": {"gpu"},
+    "DUAL": {"cpu", "gpu"},
+    "LIQUID": {"board"},
+    "GIF": set(),
+}
+
+
+def lower_priority():
+    if os.name == "nt":
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), 0x00004000)
+
+
 def relaunch_as_admin():
     if os.name != "nt" or is_admin() or "--no-elevate" in sys.argv:
         return False
@@ -186,7 +201,7 @@ class App:
             return "Searching for device...", "orange"
         if self.monitor_error:
             return f"Connected ({self.comms.device}) - sensors unavailable: {self.monitor_error}", "orange"
-        if self.stats.get("cpu_temp") is None:
+        if "cpu" in MODE_SENSORS.get(self.cfg["mode"], ()) and self.stats.get("cpu_temp") is None:
             hint = "" if is_admin() else " (run as administrator)"
             return f"Connected ({self.comms.device}) - no CPU temperature{hint}", "orange"
         return f"Connected ({self.comms.device})", "green"
@@ -204,9 +219,10 @@ class App:
             if self.comms.ensure_connected():
                 if not was_connected:
                     self.push_settings()
-                if self.monitor:
+                groups = MODE_SENSORS.get(self.cfg["mode"], set())
+                if self.monitor and groups:
                     try:
-                        self.stats = self.monitor.read()
+                        self.stats = self.monitor.read(groups)
                     except Exception as e:
                         print(f"Sensor read failed: {e}")
                     self.comms.send_stats(self.stats)
@@ -239,4 +255,5 @@ class App:
 if __name__ == "__main__":
     if relaunch_as_admin():
         sys.exit(0)
+    lower_priority()
     App().run()

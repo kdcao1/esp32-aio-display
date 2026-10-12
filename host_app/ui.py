@@ -41,6 +41,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         self.selected = None
         self.gif_rows = {}
+        self.listed = False
         self.refresh()
         self._poll_status()
         self.refresh_gifs()
@@ -137,6 +138,9 @@ class SettingsWindow(ctk.CTkToplevel):
             return
         text, color = self.app.status_text()
         self.status.configure(text=text, text_color=color)
+        if self.app.comms.connected and not self.listed:
+            self.listed = True
+            self.refresh_gifs()
         self.after(1000, self._poll_status)
 
     def refresh_gifs(self):
@@ -147,8 +151,10 @@ class SettingsWindow(ctk.CTkToplevel):
             widget.destroy()
         self.gif_rows = {}
         if info is None:
+            self.listed = False
             self.storage.configure(text="Device not connected")
             return
+        self.listed = True
         sd = info.get("sd") or ""
         if info["storage"] == "SD":
             where = "SD card"

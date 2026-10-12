@@ -8,6 +8,15 @@ import clr
 CPU_TEMP_NAMES = ("Core (Tctl/Tdie)", "CPU Package", "Package", "Core Average", "Core Max")
 GPU_TYPES = ("GpuNvidia", "GpuAmd", "GpuIntel")
 LIQUID_HINTS = ("liquid", "coolant", "water")
+ALL_GROUPS = frozenset({"cpu", "gpu", "board"})
+
+
+def hardware_group(hw_type):
+    if hw_type == "Cpu":
+        return "cpu"
+    if hw_type in GPU_TYPES:
+        return "gpu"
+    return "board"
 
 
 def is_admin():
@@ -58,7 +67,7 @@ class HardwareMonitor:
         computer.Open()
         return computer
 
-    def readings(self):
+    def readings(self, groups=ALL_GROUPS):
         result = []
 
         def visit(hw, hw_type):
@@ -70,7 +79,9 @@ class HardwareMonitor:
                 visit(sub, hw_type)
 
         for hw in self.computer.Hardware:
-            visit(hw, str(hw.HardwareType))
+            hw_type = str(hw.HardwareType)
+            if hardware_group(hw_type) in groups:
+                visit(hw, hw_type)
         return result
 
     @staticmethod
@@ -90,8 +101,8 @@ class HardwareMonitor:
                 return True, r.value
         return True, None
 
-    def read(self):
-        all_readings = self.readings()
+    def read(self, groups=ALL_GROUPS):
+        all_readings = self.readings(groups)
 
         def of(hw_types, sensor_type):
             return [r for r in all_readings if r.hw_type in hw_types and r.type == sensor_type]
