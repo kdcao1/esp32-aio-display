@@ -29,6 +29,7 @@ public:
     Canvas(uint16_t *pixels, int width, int height) : px(pixels), w(width), h(height) {}
 
     uint16_t *pixels() { return px; }
+    void setPixels(uint16_t *pixels) { px = pixels; }
     int width() const { return w; }
     int height() const { return h; }
 

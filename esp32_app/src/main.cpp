@@ -12,6 +12,8 @@
 #define CHUNK_TIMEOUT_MS 1500
 #define UPLOAD_RETRIES 8
 #define SAVE_DELAY_MS 2000
+#define FRAME_MS 33
+#define FRAME_BYTES (SCREEN_WIDTH * SCREEN_HEIGHT * 2)
 #define FS_MARGIN 16384
 
 enum Mode { MODE_CPU, MODE_GPU, MODE_DUAL, MODE_GIF, MODE_LIQUID };
@@ -24,6 +26,8 @@ static Preferences prefs;
 
 static AnimatedGIF gif;
 static uint8_t *gifData = nullptr;
+static uint16_t *gifCanvas = nullptr;
+static uint32_t lastRenderMs = 0;
 static bool gifOpen = false;
 static int gifOffX = 0, gifOffY = 0, gifScale = 1;
 static uint32_t nextFrameMs = 0;
@@ -42,8 +46,13 @@ static uint32_t crc32Update(uint32_t crc, const uint8_t *data, size_t len) {
     return ~crc;
 }
 
+static Canvas &target() {
+    canvas->setPixels(frameBuffer());
+    return *canvas;
+}
+
 static void showMessage(const char *title, const char *detail) {
-    dash.renderMessage(*canvas, title, detail);
+    dash.renderMessage(target(), title, detail);
     flushDisplay();
 }
 
@@ -56,7 +65,7 @@ static void GIFDraw(GIFDRAW *p) {
     for (int dy = 0; dy < s; dy++) {
         int y = y0 + dy;
         if (y < 0 || y >= SCREEN_HEIGHT) continue;
-        uint16_t *row = frameBuffer() + y * SCREEN_WIDTH;
+        uint16_t *row = gifCanvas + y * SCREEN_WIDTH;
         for (int i = 0; i < p->iWidth; i++) {
             uint8_t c = src[i];
             if (p->ucHasTransparency && c == p->ucTransparent) continue;
@@ -73,6 +82,8 @@ static void closeGif() {
     gifOpen = false;
     free(gifData);
     gifData = nullptr;
+    free(gifCanvas);
+    gifCanvas = nullptr;
 }
 
 static void openGif() {
@@ -84,7 +95,8 @@ static void openGif() {
     }
     size_t size = f.size();
     gifData = (uint8_t *)heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-    if (!gifData || f.read(gifData, size) != size) {
+    gifCanvas = (uint16_t *)heap_caps_calloc(1, FRAME_BYTES, MALLOC_CAP_SPIRAM);
+    if (!gifData || !gifCanvas || f.read(gifData, size) != size) {
         f.close();
         closeGif();
         showMessage("GIF LOAD FAILED", "");
@@ -100,7 +112,6 @@ static void openGif() {
     gifScale = (gif.getCanvasWidth() <= SCREEN_WIDTH / 2 && gif.getCanvasHeight() <= SCREEN_HEIGHT / 2) ? 2 : 1;
     gifOffX = (SCREEN_WIDTH - gif.getCanvasWidth() * gifScale) / 2;
     gifOffY = (SCREEN_HEIGHT - gif.getCanvasHeight() * gifScale) / 2;
-    canvas->clear(0);
     nextFrameMs = millis();
 }
 
@@ -115,7 +126,7 @@ static void applyMode(Mode m) {
                  : mode == MODE_DUAL   ? VIEW_DUAL
                  : mode == MODE_LIQUID ? VIEW_LIQUID
                                        : VIEW_CPU);
-    dash.render(*canvas);
+    dash.render(target());
     flushDisplay();
 }
 
@@ -359,8 +370,9 @@ void loop() {
     }
 
     if (mode != MODE_GIF) {
-        if (dash.update(now)) {
-            dash.render(*canvas);
+        if (now - lastRenderMs >= FRAME_MS && dash.update(now)) {
+            lastRenderMs = now;
+            dash.render(target());
             flushDisplay();
         }
         delay(5);
@@ -373,6 +385,7 @@ void loop() {
     }
     int delayMs = 0;
     int result = gif.playFrame(false, &delayMs);
+    memcpy(frameBuffer(), gifCanvas, FRAME_BYTES);
     flushDisplay();
     if (result <= 0) gif.reset();
     nextFrameMs = now + max(delayMs, 20);
