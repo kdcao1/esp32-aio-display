@@ -131,6 +131,11 @@ class HardwareMonitor:
                 stats["gpu_load"] = next((r.value for r in of((gpu_type,), "Load") if r.name == "GPU Core"), None)
                 break
 
+        for key, stat in (("cpu_sensor", "cpu_temp"), ("gpu_sensor", "gpu_temp")):
+            found, value = self._override(all_readings, key, "Temperature")
+            if found:
+                stats[stat] = value
+
         found, value = self._override(all_readings, "liquid_sensor", "Temperature")
         if not found:
             value = next((r.value for r in all_readings if r.type == "Temperature"

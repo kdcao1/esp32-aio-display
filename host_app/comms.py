@@ -213,6 +213,22 @@ class ESP32Comms:
     def gif_delete(self, name):
         return self._query(f"GIFDEL:{name}", "DONE") is not None
 
+    def set_rotation(self, degrees):
+        return self.send_command(f"ROTATE:{int(degrees)}")
+
+    def set_screen(self, on):
+        return self.send_command(f"SCREEN:{'ON' if on else 'OFF'}")
+
+    def set_sleep(self, seconds):
+        return self.send_command(f"SLEEP:{int(seconds)}")
+
+    def keep_alive(self):
+        return self.send_command("ALIVE")
+
+    def version(self):
+        lines = self._query("VERSION", "VERSION ")
+        return lines[-1].split()[1] if lines else None
+
     def set_gif_quality(self, smooth):
         return self.send_command(f"QUALITY:{'SMOOTH' if smooth else 'SHARP'}")
 

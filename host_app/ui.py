@@ -9,6 +9,16 @@ CUSTOM = "Custom"
 COLOR_MODE_LABELS = {"gradient": "Gradient", "temperature": "Follows temperature"}
 QUALITY_LABELS = {"sharp": "Sharp (480)", "smooth": "Smooth (240, faster)"}
 CYCLE_LABELS = {0: "Off", 30: "30 seconds", 60: "1 minute", 300: "5 minutes", 900: "15 minutes"}
+ROTATION_LABELS = {0: "0°", 90: "90°", 180: "180°", 270: "270°"}
+IDLE_LABELS = {0: "Never", 5: "5 minutes", 10: "10 minutes", 15: "15 minutes", 30: "30 minutes", 60: "1 hour"}
+SENSOR_ROWS = (
+    ("cpu_sensor", "CPU temperature", "Temperature"),
+    ("gpu_sensor", "GPU temperature", "Temperature"),
+    ("liquid_sensor", "Liquid temperature", "Temperature"),
+    ("pump_sensor", "Pump speed", "Fan"),
+    ("fan_sensor", "Fan speed", "Fan"),
+)
+AUTO = "Automatic"
 
 
 def format_bytes(n):
@@ -38,6 +48,8 @@ class SettingsWindow(ctk.CTkToplevel):
         tabs.grid(row=2, column=0, padx=12, pady=(4, 12), sticky="nsew")
         self._build_display(tabs.add("Display"))
         self._build_gifs(tabs.add("GIF library"))
+        self._build_sensors(tabs.add("Sensors"))
+        self._build_device(tabs.add("Device"))
 
         self.selected = None
         self.gif_rows = {}
@@ -45,6 +57,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self.refresh()
         self._poll_status()
         self.refresh_gifs()
+        self.refresh_sensors()
+        self.refresh_firmware()
 
     def _section(self, parent, text, row):
         ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=14, weight="bold")).grid(
@@ -84,11 +98,62 @@ class SettingsWindow(ctk.CTkToplevel):
                                         command=lambda: self.app.set_detail("show_rpm", self.show_rpm.get()))
         self.show_rpm.pack(side="left", padx=20)
 
+
+    def _build_sensors(self, tab):
+        tab.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(tab, text="Pick which sensor feeds each reading.", anchor="w").grid(
+            row=0, column=0, columnspan=2, padx=8, pady=(8, 10), sticky="w")
+        self.sensor_menus = {}
+        self.sensor_choices = {}
+        for i, (key, label, _) in enumerate(SENSOR_ROWS, start=1):
+            ctk.CTkLabel(tab, text=label, anchor="w").grid(row=i, column=0, padx=8, pady=4, sticky="w")
+            menu = ctk.CTkOptionMenu(tab, values=[AUTO], dynamic_resizing=False, width=260,
+                                     command=lambda choice, k=key: self._on_sensor(k, choice))
+            menu.grid(row=i, column=1, padx=8, pady=4, sticky="ew")
+            self.sensor_menus[key] = menu
+        ctk.CTkButton(tab, text="Refresh sensor list", command=self.refresh_sensors).grid(
+            row=len(SENSOR_ROWS) + 1, column=0, columnspan=2, padx=8, pady=(14, 0), sticky="w")
+
+    def _build_device(self, tab):
+        tab.grid_columnconfigure(0, weight=1)
+        self._section(tab, "Rotation", 0)
+        self.rotation = ctk.CTkSegmentedButton(tab, values=list(ROTATION_LABELS.values()), command=self._on_rotation)
+        self.rotation.grid(row=1, column=0, padx=8, sticky="ew")
+
+        self._section(tab, "Screen power", 2)
+        idle_row = ctk.CTkFrame(tab, fg_color="transparent")
+        idle_row.grid(row=3, column=0, padx=8, sticky="ew")
+        ctk.CTkLabel(idle_row, text="Turn off when the PC is idle for").pack(side="left")
+        self.idle = ctk.CTkOptionMenu(idle_row, values=list(IDLE_LABELS.values()), width=130,
+                                      command=lambda v: self.app.set_option(
+                                          "idle_off_minutes", next(k for k, l in IDLE_LABELS.items() if l == v)))
+        self.idle.pack(side="left", padx=10)
+        self.off_locked = ctk.CTkCheckBox(tab, text="Turn off when the PC is locked",
+                                          command=lambda: self.app.set_option("off_when_locked",
+                                                                              bool(self.off_locked.get())))
+        self.off_locked.grid(row=4, column=0, padx=8, pady=(8, 0), sticky="w")
+        self.off_asleep = ctk.CTkCheckBox(tab, text="Turn off when the PC is asleep or shut down",
+                                          command=lambda: self.app.set_option("off_when_asleep",
+                                                                              bool(self.off_asleep.get())))
+        self.off_asleep.grid(row=5, column=0, padx=8, pady=(8, 0), sticky="w")
+
+        self._section(tab, "Firmware", 6)
+        self.fw_status = ctk.CTkLabel(tab, text="Checking...", anchor="w", wraplength=400, justify="left")
+        self.fw_status.grid(row=7, column=0, padx=8, sticky="ew")
+        fw_row = ctk.CTkFrame(tab, fg_color="transparent")
+        fw_row.grid(row=8, column=0, padx=8, pady=(6, 0), sticky="ew")
+        self.fw_update = ctk.CTkButton(fw_row, text="Update firmware", width=130, state="disabled",
+                                       command=lambda: self._flash(self.bundled_fw))
+        self.fw_update.pack(side="left")
+        self.fw_file = ctk.CTkButton(fw_row, text="Flash file...", width=100, command=self._flash_file)
+        self.fw_file.pack(side="left", padx=8)
+
         self._section(tab, "System", 9)
         self.autostart = ctk.CTkCheckBox(tab, text="Start with Windows", command=self._on_autostart)
         self.autostart.grid(row=10, column=0, padx=8, sticky="w")
         if self.app.autostart_enabled():
             self.autostart.select()
+        self.bundled_fw = None
 
     def _build_gifs(self, tab):
         tab.grid_columnconfigure(0, weight=1)
@@ -141,8 +206,11 @@ class SettingsWindow(ctk.CTkToplevel):
         self.brightness.set(cfg["brightness"])
         self.color_mode.set(COLOR_MODE_LABELS[cfg["color_mode"]])
         self.quality.set(QUALITY_LABELS[cfg["gif_quality"]])
-        for box, key in ((self.show_load, "show_load"), (self.show_rpm, "show_rpm")):
+        for box, key in ((self.show_load, "show_load"), (self.show_rpm, "show_rpm"),
+                         (self.off_locked, "off_when_locked"), (self.off_asleep, "off_when_asleep")):
             box.select() if cfg[key] else box.deselect()
+        self.rotation.set(ROTATION_LABELS.get(cfg["rotation"], "0°"))
+        self.idle.set(IDLE_LABELS.get(cfg["idle_off_minutes"], "Never"))
         self.cycle.set(CYCLE_LABELS.get(cfg["gif_cycle"], "Off"))
 
     def _poll_status(self):
@@ -192,6 +260,73 @@ class SettingsWindow(ctk.CTkToplevel):
         if not info["gifs"]:
             ctk.CTkLabel(self.gif_list, text="No GIFs yet - upload one.").grid(row=0, column=0, pady=10)
         self._highlight()
+
+    def refresh_sensors(self):
+        self.app.list_sensors(self._show_sensors)
+
+    def _show_sensors(self, readings):
+        for key, _, sensor_type in SENSOR_ROWS:
+            choices = {AUTO: ""}
+            for r_type, label, value in readings:
+                if r_type == sensor_type:
+                    unit = "°C" if sensor_type == "Temperature" else " RPM"
+                    choices[f"{label}  ({value:.0f}{unit})"] = label
+            current = self.app.cfg[key]
+            if current and current not in choices.values():
+                choices[f"{current}  (not found)"] = current
+            self.sensor_choices[key] = choices
+            menu = self.sensor_menus[key]
+            menu.configure(values=list(choices))
+            menu.set(next((d for d, l in choices.items() if l == current), AUTO))
+
+    def _on_sensor(self, key, choice):
+        self.app.set_sensor(key, self.sensor_choices.get(key, {}).get(choice, ""))
+
+    def _on_rotation(self, label):
+        self.app.set_option("rotation", next(k for k, v in ROTATION_LABELS.items() if v == label))
+
+    def refresh_firmware(self):
+        self.app.firmware_status(self._show_firmware)
+
+    def _show_firmware(self, info):
+        self.bundled_fw = info["bundled"]
+        device, bundled = info["device"], info["bundled_id"]
+        if not bundled:
+            text = "No bundled firmware. Build esp32_app with PlatformIO before build_exe.bat, or flash a file."
+            state = "disabled"
+        elif not device:
+            text = "Couldn't read the screen's firmware version. Update to the bundled firmware?"
+            state = "normal"
+        elif device == bundled:
+            text = "Firmware is up to date."
+            state = "disabled"
+        else:
+            text = "A firmware update is available."
+            state = "normal"
+        self.fw_status.configure(text=text)
+        self.fw_update.configure(state=state)
+
+    def _flash_file(self):
+        path = filedialog.askopenfilename(parent=self, title="Select firmware", filetypes=[("Firmware", "*.bin")])
+        if path:
+            self._flash(path)
+
+    def _flash(self, path):
+        if not path or not messagebox.askyesno(
+                "Cooler Screen", "Update the screen's firmware?\n\nDon't unplug it until this finishes (about 30 seconds).",
+                parent=self):
+            return
+        self.fw_update.configure(state="disabled")
+        self.fw_file.configure(state="disabled")
+        self.fw_status.configure(text="Updating firmware...")
+
+        def done(error):
+            self.fw_file.configure(state="normal")
+            if error:
+                messagebox.showerror("Cooler Screen", f"Firmware update failed:\n{error}", parent=self)
+            self.after(3000, self.refresh_firmware)
+
+        self.app.update_firmware(path, done)
 
     def _select(self, name):
         self.selected = name

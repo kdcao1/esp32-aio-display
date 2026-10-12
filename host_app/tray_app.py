@@ -10,6 +10,8 @@ import pystray
 
 import autostart
 import config
+import firmware
+import idle
 from comms import ESP32Comms, UploadError
 from gif_tools import FULL_SIZE, HALF_SIZE, gif_name, prepare_gif
 from icon import create_icon
@@ -24,6 +26,9 @@ MODE_SENSORS = {
     "LIQUID": {"board"},
     "GIF": set(),
 }
+
+
+SENSOR_KEYS = ("cpu_sensor", "gpu_sensor", "liquid_sensor", "pump_sensor", "fan_sensor")
 
 
 def lower_priority():
@@ -48,6 +53,10 @@ class App:
         self.comms = ESP32Comms(port=self.cfg["port"])
         self.monitor = None
         self.monitor_error = None
+        self.monitor_lock = threading.Lock()
+        self.overrides = {k: self.cfg[k] for k in SENSOR_KEYS}
+        self.screen_on = True
+        self.flashing = False
         self.stats = {}
         self.running = True
         self.tasks = queue.Queue()
@@ -129,6 +138,9 @@ class App:
         self.comms.set_gif_cycle(self.cfg["gif_cycle"])
         self.comms.set_gif_quality(self.cfg["gif_quality"] == "smooth")
         self.comms.set_brightness(self.cfg["brightness"])
+        self.comms.set_rotation(self.cfg["rotation"])
+        self.comms.set_sleep(60 if self.cfg["off_when_asleep"] else 0)
+        self.comms.set_screen(self.screen_on)
         self.comms.set_mode(self.cfg["mode"])
 
     def run_async(self, work, on_done=None):
@@ -200,7 +212,66 @@ class App:
         groups = set(MODE_SENSORS.get(self.cfg["mode"], set()))
         if self.cfg["mode"] == "CPU" and not self.cfg["show_rpm"]:
             groups.discard("board")
+        if groups and any(self.overrides.values()):
+            groups |= {"cpu", "gpu", "board"}
         return groups
+
+    def screen_wanted(self):
+        minutes = self.cfg["idle_off_minutes"]
+        if minutes and idle.idle_seconds() > minutes * 60:
+            return False
+        return not (self.cfg["off_when_locked"] and idle.is_locked())
+
+    def set_option(self, key, value):
+        self.cfg[key] = value
+        self.save()
+        if key == "rotation":
+            self.comms.set_rotation(value)
+        elif key == "off_when_asleep":
+            self.comms.set_sleep(60 if value else 0)
+
+    def set_sensor(self, key, label):
+        self.cfg[key] = self.overrides[key] = label
+        self.save()
+
+    def list_sensors(self, on_done):
+        def work():
+            if not self.monitor:
+                return []
+            with self.monitor_lock:
+                return [(r.type, r.label, r.value) for r in self.monitor.readings()]
+
+        self.run_async(work, on_done)
+
+    def firmware_status(self, on_done):
+        def work():
+            bundled = firmware.bundled_firmware()
+            try:
+                bundled_id = firmware.firmware_id(bundled) if bundled else None
+            except (OSError, ValueError):
+                bundled_id = None
+            return {"device": self.comms.version(), "bundled": bundled, "bundled_id": bundled_id}
+
+        self.run_async(work, on_done)
+
+    def update_firmware(self, path, on_done):
+        def work():
+            port = self.comms.device or self.cfg["port"]
+            if not port:
+                return "Device not connected"
+            self.flashing = True
+            try:
+                self.comms.disconnect()
+                time.sleep(0.5)
+                firmware.flash(port, path)
+                time.sleep(4)
+                return None
+            except (RuntimeError, OSError, ValueError) as e:
+                return str(e)
+            finally:
+                self.flashing = False
+
+        self.run_async(work, on_done)
 
     def visible_stats(self):
         stats = dict(self.stats)
@@ -216,6 +287,8 @@ class App:
         self.comms.send_stats(self.visible_stats())
 
     def status_text(self):
+        if self.flashing:
+            return "Updating firmware...", "orange"
         if not self.comms.connected:
             return "Searching for device...", "orange"
         if self.monitor_error:
@@ -227,7 +300,7 @@ class App:
 
     def worker(self):
         try:
-            self.monitor = HardwareMonitor({k: self.cfg[k] for k in ("liquid_sensor", "pump_sensor", "fan_sensor")})
+            self.monitor = HardwareMonitor(self.overrides)
         except Exception as e:
             self.monitor_error = str(e)
             print(f"Monitor init failed: {e}")
@@ -235,16 +308,23 @@ class App:
         was_connected = False
         while self.running:
             started = time.time()
-            if self.comms.ensure_connected():
+            if not self.flashing and self.comms.ensure_connected():
                 if not was_connected:
                     self.push_settings()
-                groups = self.sensor_groups()
+                on = self.screen_wanted()
+                if on != self.screen_on:
+                    self.screen_on = on
+                    self.comms.set_screen(on)
+                groups = self.sensor_groups() if on else set()
                 if self.monitor and groups:
                     try:
-                        self.stats = self.monitor.read(groups)
+                        with self.monitor_lock:
+                            self.stats = self.monitor.read(groups)
                     except Exception as e:
                         print(f"Sensor read failed: {e}")
                     self.comms.send_stats(self.visible_stats())
+                else:
+                    self.comms.keep_alive()
             was_connected = self.comms.connected
             self.icon.title = f"Cooler Screen - {self.status_text()[0]}"
             time.sleep(max(0.1, self.cfg["interval"] - (time.time() - started)))

@@ -35,7 +35,9 @@ Sensors come from LibreHardwareMonitor 0.9.6 (`host_app/lhm`), which needs the [
 
 GIFs live in a library on the microSD card (falls back to internal flash without a card) and are managed from the **GIF library** tab: upload, play, delete, and cycle through them on a timer. Every upload stores two copies: 480x480 (**Sharp**) and 240x240 scaled 2x (**Smooth**, about 4x faster to decode); **Playback quality** switches between them instantly. Copies are capped at 300 frames and 5 MB (a GIF too large for Sharp keeps only its Smooth copy).
 
-Liquid temperature, pump and fan RPM are detected automatically by sensor name. If the wrong sensor is picked (or none), run `venv\Scripts\python monitor.py --list` as administrator and put part of the right sensor's name into `liquid_sensor`, `pump_sensor` or `fan_sensor` in the config file.
+Sensors are picked automatically; the **Sensors** tab lets you choose the exact sensor for CPU/GPU/liquid temperature and pump/fan speed (`venv\Scripts\python monitor.py --list` prints everything available).
+
+The **Device** tab sets rotation, screen power (off when the PC is idle, locked, or asleep/shut down; the board blanks itself after 60 s without the PC) and updates firmware: `build_exe.bat` bundles the last `pio run` build, and the app offers **Update firmware** when the board runs something different. **Flash file...** flashes any `firmware.bin`.
 
 ## Serial protocol
 
@@ -56,3 +58,7 @@ Newline-terminated commands:
 | `GIFDEL:<name>` | Delete a GIF; replies `DONE` |
 | `QUALITY:SHARP\|SMOOTH` | Which copy to play |
 | `GIFCYCLE:<seconds>` | Rotate through the library; `0` turns it off |
+| `ROTATE:0\|90\|180\|270` | Screen rotation |
+| `SCREEN:ON\|OFF` | Backlight on/off |
+| `SLEEP:<seconds>` | Blank the screen after this long without any command (`0` = never) |
+| `VERSION` | `VERSION <app ELF SHA-256 prefix> <protocol>` |
