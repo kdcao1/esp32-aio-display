@@ -23,6 +23,8 @@ DEFAULTS = {
     "brightness": 100,
     "port": None,
     "interval": 1.0,
+    "gif_quality": "sharp",
+    "gif_cycle": 0,
     "liquid_sensor": "",
     "pump_sensor": "",
     "fan_sensor": "",

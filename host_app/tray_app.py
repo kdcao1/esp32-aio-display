@@ -11,7 +11,7 @@ import pystray
 import autostart
 import config
 from comms import ESP32Comms, UploadError
-from gif_tools import FULL_SIZE, HALF_SIZE, prepare_gif
+from gif_tools import FULL_SIZE, HALF_SIZE, gif_name, prepare_gif
 from icon import create_icon
 from monitor import HardwareMonitor, is_admin
 from ui import SettingsWindow
@@ -111,10 +111,42 @@ class App:
         self.comms.set_theme(self.cfg["color_start"], self.cfg["color_end"])
         self.comms.set_color_mode(config.COLOR_MODES[self.cfg["color_mode"]])
         self.comms.set_track(self.cfg["track_color"])
+        self.comms.set_gif_cycle(self.cfg["gif_cycle"])
         self.comms.set_brightness(self.cfg["brightness"])
         self.comms.set_mode(self.cfg["mode"])
 
+    def run_async(self, work, on_done=None):
+        def runner():
+            result = work()
+            if on_done:
+                self.call_soon(lambda: on_done(result))
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    def refresh_gifs(self, on_done):
+        self.run_async(self.comms.gif_list, on_done)
+
+    def play_gif(self, name):
+        self.cfg["mode"] = "GIF"
+        self.save()
+        self.comms.gif_play(name)
+        self.icon.update_menu()
+
+    def delete_gif(self, name, on_done):
+        self.run_async(lambda: self.comms.gif_delete(name), on_done)
+
+    def set_gif_cycle(self, seconds):
+        self.cfg["gif_cycle"] = seconds
+        self.save()
+        self.comms.set_gif_cycle(seconds)
+
+    def set_gif_quality(self, value):
+        self.cfg["gif_quality"] = value
+        self.save()
+
     def upload_gif(self, path, on_progress, on_done):
+        name = gif_name(path)
+
         def report(fraction, message=None):
             self.call_soon(lambda: on_progress(fraction, message))
 
@@ -122,25 +154,29 @@ class App:
             report(0, f"Preparing {size}x{size} GIF...")
             data = prepare_gif(path, size)
             report(0, f"Uploading {len(data) / 1_000_000:.1f} MB...")
-            self.comms.upload_gif(data, report)
-            return data
+            self.comms.upload_gif(data, name, report)
 
         def work():
             try:
-                try:
-                    send(FULL_SIZE)
-                except UploadError as e:
-                    if not str(e).startswith("ERR SIZE"):
-                        raise
+                if self.cfg["gif_quality"] == "smooth":
                     send(HALF_SIZE)
-                self.call_soon(lambda: on_done(None))
+                else:
+                    try:
+                        send(FULL_SIZE)
+                    except UploadError as e:
+                        if not str(e).startswith("ERR SIZE"):
+                            raise
+                        send(HALF_SIZE)
+                self.cfg["mode"] = "GIF"
+                self.save()
+                return None
             except (UploadError, OSError, ValueError) as e:
                 msg = str(e)
                 if msg.startswith("ERR SIZE"):
-                    msg = f"GIF too large even at {HALF_SIZE}x{HALF_SIZE} (device has {int(msg.split()[-1]) / 1e6:.1f} MB)"
-                self.call_soon(lambda: on_done(msg))
+                    msg = f"GIF too large (room for {int(msg.split()[-1]) / 1e6:.1f} MB)"
+                return msg
 
-        threading.Thread(target=work, daemon=True).start()
+        self.run_async(work, on_done)
 
     def status_text(self):
         if not self.comms.connected:

@@ -162,7 +162,52 @@ class ESP32Comms:
                 raise UploadError(line)
         raise UploadError(f"Timed out waiting for {'/'.join(prefixes)}")
 
-    def upload_gif(self, data, progress=None):
+    def _query(self, cmd, end_prefix, timeout=5):
+        if self.uploading:
+            return None
+        with self.lock:
+            if not self.connected:
+                return None
+            try:
+                self._pending = b""
+                self.ser.reset_input_buffer()
+                self.ser.write((cmd + "\n").encode())
+                lines = []
+                deadline = time.time() + timeout
+                while (line := self._readline(self.ser, deadline)) is not None:
+                    lines.append(line)
+                    if line.startswith(end_prefix):
+                        return lines
+            except (serial.SerialException, OSError):
+                self.disconnect()
+            return None
+
+    def gif_list(self):
+        lines = self._query("GIFLIST", "END ")
+        if not lines:
+            return None
+        gifs = []
+        info = {"free": 0, "storage": "FLASH", "current": None, "cycle": 0}
+        for line in lines:
+            parts = line.split()
+            if parts[0] == "GIF" and len(parts) == 3:
+                gifs.append((parts[1], int(parts[2])))
+            elif parts[0] == "END" and len(parts) >= 5:
+                info.update(free=int(parts[1]), storage=parts[2],
+                            current=None if parts[3] == "-" else parts[3], cycle=int(parts[4]))
+        info["gifs"] = gifs
+        return info
+
+    def gif_play(self, name):
+        return self.send_command(f"GIFPLAY:{name}")
+
+    def gif_delete(self, name):
+        return self._query(f"GIFDEL:{name}", "DONE") is not None
+
+    def set_gif_cycle(self, seconds):
+        return self.send_command(f"GIFCYCLE:{int(seconds)}")
+
+    def upload_gif(self, data, name, progress=None):
         with self.lock:
             if not self.connected:
                 raise UploadError("Device not connected")
@@ -170,7 +215,7 @@ class ESP32Comms:
             try:
                 self.ser.reset_input_buffer()
                 self._pending = b""
-                self.ser.write(f"UPLOAD:{len(data)},{zlib.crc32(data):08X}\n".encode())
+                self.ser.write(f"UPLOAD:{len(data)},{zlib.crc32(data):08X},{name}\n".encode())
                 self._expect("READY", 5)
                 sent = 0
                 while sent < len(data):

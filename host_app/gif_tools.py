@@ -1,4 +1,6 @@
 import io
+import os
+import re
 
 from PIL import Image, ImageOps, ImageSequence
 
@@ -23,3 +25,8 @@ def prepare_gif(path, size=FULL_SIZE):
     frames[0].save(out, format="GIF", save_all=True, append_images=frames[1:],
                    duration=durations, loop=0, disposal=1, optimize=True)
     return out.getvalue()
+
+
+def gif_name(path):
+    name = re.sub(r"[^a-z0-9_-]+", "-", os.path.splitext(os.path.basename(path))[0].lower()).strip("-")
+    return name[:40] or "gif"

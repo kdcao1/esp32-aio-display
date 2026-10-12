@@ -1,13 +1,14 @@
 #include <Arduino.h>
-#include <LittleFS.h>
 #include <Preferences.h>
 #include <AnimatedGIF.h>
 
 #include "display.h"
 #include "dashboard.h"
+#include "storage.h"
 
-#define PROTOCOL_VERSION 4
-#define GIF_PATH "/anim.gif"
+#define PROTOCOL_VERSION 5
+#define MAX_GIF_BYTES (5 * 1024 * 1024)
+#define MAX_GIFS 64
 #define UPLOAD_CHUNK 4096
 #define CHUNK_TIMEOUT_MS 1500
 #define UPLOAD_RETRIES 8
@@ -26,7 +27,10 @@ static Preferences prefs;
 
 static AnimatedGIF gif;
 static uint8_t *gifData = nullptr;
-static uint16_t *gifCanvas = nullptr;
+static uint16_t *gifTarget = nullptr;
+static char currentGif[41] = "";
+static uint32_t cycleSec = 0, cycleAtMs = 0;
+static uint32_t statFrames = 0, statDecodeMs = 0, statAtMs = 0;
 static uint32_t lastRenderMs = 0;
 static bool gifOpen = false;
 static int gifOffX = 0, gifOffY = 0, gifScale = 1;
@@ -58,22 +62,29 @@ static void showMessage(const char *title, const char *detail) {
 
 static void GIFDraw(GIFDRAW *p) {
     const int s = gifScale;
-    int y0 = gifOffY + (p->iY + p->y) * s;
+    int y = gifOffY + (p->iY + p->y) * s;
+    if (y < 0 || y + s > SCREEN_HEIGHT) return;
     const uint8_t *src = p->pPixels;
     const uint16_t *pal = p->pPalette;
     int x0 = gifOffX + p->iX * s;
-    for (int dy = 0; dy < s; dy++) {
-        int y = y0 + dy;
-        if (y < 0 || y >= SCREEN_HEIGHT) continue;
-        uint16_t *row = gifCanvas + y * SCREEN_WIDTH;
-        for (int i = 0; i < p->iWidth; i++) {
+    int w = min(p->iWidth, (SCREEN_WIDTH - x0) / s);
+    if (x0 < 0 || w <= 0) return;
+    uint16_t *row = gifTarget + y * SCREEN_WIDTH + x0;
+    bool transparent = p->ucHasTransparency;
+    uint8_t key = p->ucTransparent;
+    if (s == 1) {
+        for (int i = 0; i < w; i++) {
             uint8_t c = src[i];
-            if (p->ucHasTransparency && c == p->ucTransparent) continue;
-            for (int dx = 0; dx < s; dx++) {
-                int x = x0 + i * s + dx;
-                if (x >= 0 && x < SCREEN_WIDTH) row[x] = pal[c];
-            }
+            if (!transparent || c != key) row[i] = pal[c];
         }
+        return;
+    }
+    uint16_t *next = row + SCREEN_WIDTH;
+    for (int i = 0; i < w; i++) {
+        uint8_t c = src[i];
+        if (transparent && c == key) continue;
+        uint16_t v = pal[c];
+        row[2 * i] = row[2 * i + 1] = next[2 * i] = next[2 * i + 1] = v;
     }
 }
 
@@ -82,37 +93,56 @@ static void closeGif() {
     gifOpen = false;
     free(gifData);
     gifData = nullptr;
-    free(gifCanvas);
-    gifCanvas = nullptr;
+}
+
+static bool pickGif(int offset) {
+    static char names[MAX_GIFS][41];
+    static size_t sizes[MAX_GIFS];
+    int count = listGifs(names, sizes, MAX_GIFS);
+    if (!count) return false;
+    int index = -1;
+    for (int i = 0; i < count; i++) {
+        if (!strcmp(names[i], currentGif)) index = i;
+    }
+    index = index < 0 ? 0 : (index + offset + count) % count;
+    strcpy(currentGif, names[index]);
+    return true;
 }
 
 static void openGif() {
     closeGif();
-    File f = LittleFS.open(GIF_PATH, "r");
-    if (!f) {
-        showMessage("NO GIF UPLOADED", "UPLOAD ONE FROM THE PC APP");
-        return;
+    if (!currentGif[0] || !gifExists(currentGif)) {
+        if (!pickGif(0)) {
+            showMessage("NO GIFS YET", "UPLOAD ONE FROM THE PC APP");
+            return;
+        }
     }
-    size_t size = f.size();
-    gifData = (uint8_t *)heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-    gifCanvas = (uint16_t *)heap_caps_calloc(1, FRAME_BYTES, MALLOC_CAP_SPIRAM);
-    if (!gifData || !gifCanvas || f.read(gifData, size) != size) {
-        f.close();
+    char path[64];
+    gifPath(currentGif, path, sizeof(path));
+    File f = gifFs().open(path, "r");
+    size_t size = f ? f.size() : 0;
+    gifData = size ? (uint8_t *)heap_caps_malloc(size, MALLOC_CAP_SPIRAM) : nullptr;
+    if (!gifData || f.read(gifData, size) != size) {
+        if (f) f.close();
         closeGif();
-        showMessage("GIF LOAD FAILED", "");
+        showMessage("GIF LOAD FAILED", currentGif);
         return;
     }
     f.close();
     if (!gif.open(gifData, size, GIFDraw)) {
         closeGif();
-        showMessage("INVALID GIF", "");
+        showMessage("INVALID GIF", currentGif);
         return;
     }
     gifOpen = true;
     gifScale = (gif.getCanvasWidth() <= SCREEN_WIDTH / 2 && gif.getCanvasHeight() <= SCREEN_HEIGHT / 2) ? 2 : 1;
     gifOffX = (SCREEN_WIDTH - gif.getCanvasWidth() * gifScale) / 2;
     gifOffY = (SCREEN_HEIGHT - gif.getCanvasHeight() * gifScale) / 2;
-    nextFrameMs = millis();
+    gifTarget = visibleBuffer();
+    memset(gifTarget, 0, FRAME_BYTES);
+    nextFrameMs = statAtMs = millis();
+    statFrames = statDecodeMs = 0;
+    cycleAtMs = millis() + cycleSec * 1000;
 }
 
 static void applyMode(Mode m) {
@@ -138,6 +168,8 @@ static void writeSettings() {
     prefs.putUInt("track", dash.getTrack());
     prefs.putBool("tempcolor", dash.getTempColor());
     prefs.putUChar("bright", (uint8_t)brightness);
+    prefs.putString("gif", currentGif);
+    prefs.putUInt("cycle", cycleSec);
     resyncDisplay();
 }
 
@@ -183,31 +215,21 @@ static void drainSerial() {
     }
 }
 
-static bool writeGifFile(const uint8_t *data, size_t size) {
-    LittleFS.remove(GIF_PATH);
-    File f = LittleFS.open(GIF_PATH, "w");
-    if (!f) return false;
-    size_t written = 0;
-    while (written < size) {
-        size_t n = f.write(data + written, min((size_t)32768, size - written));
-        if (n == 0) break;
-        written += n;
-    }
-    f.close();
-    if (written != size) LittleFS.remove(GIF_PATH);
-    return written == size;
-}
-
 static void handleUpload(char *args) {
     long size = strtol(args, &args, 10);
-    uint32_t expected = (*args == ',') ? strtoul(args + 1, nullptr, 16) : 0;
+    uint32_t expected = (*args == ',') ? strtoul(args + 1, &args, 16) : 0;
+    char name[41];
+    if (*args != ',' || !sanitizeName(args + 1, name, sizeof(name))) strcpy(name, "gif");
 
+    char path[64];
+    gifPath(name, path, sizeof(path));
     long existing = 0;
-    if (File old = LittleFS.open(GIF_PATH, "r")) {
+    if (File old = gifFs().open(path, "r")) {
         existing = old.size();
         old.close();
     }
-    long space = (long)(LittleFS.totalBytes() - LittleFS.usedBytes()) + existing - FS_MARGIN;
+    uint64_t avail = freeBytes() + existing;
+    long space = avail > (uint64_t)MAX_GIF_BYTES + FS_MARGIN ? MAX_GIF_BYTES : (long)avail - FS_MARGIN;
     if (size <= 0 || size > space) {
         Serial.printf("ERR SIZE %ld\n", space);
         return;
@@ -253,17 +275,24 @@ static void handleUpload(char *args) {
     if (!error && crc32Update(0, data, size) != expected) error = "CRC";
     if (!error) {
         showMessage("SAVING GIF", "");
-        delay(50);
-        setBacklight(false);
-        bool ok = writeGifFile(data, size);
-        resyncDisplay();
-        setBacklight(true);
-        if (!ok) error = "WRITE";
+        bool flash = !onSdCard();
+        if (flash) {
+            delay(50);
+            setBacklight(false);
+        }
+        bool ok = writeFile(path, data, size);
+        if (flash) {
+            resyncDisplay();
+            setBacklight(true);
+        }
+        if (ok) strcpy(currentGif, name);
+        else error = "WRITE";
     }
     free(data);
 
     if (error) Serial.printf("ERR %s\n", error);
     else Serial.printf("OK %d\n", retries);
+    saveSettings();
     applyMode(mode);
 }
 
@@ -313,6 +342,38 @@ static void handleCommand(char *cmd) {
         saveSettings();
     } else if (!strcmp(cmd, "UPLOAD")) {
         handleUpload(arg);
+    } else if (!strcmp(cmd, "GIFLIST")) {
+        static char names[MAX_GIFS][41];
+        static size_t sizes[MAX_GIFS];
+        int count = listGifs(names, sizes, MAX_GIFS);
+        for (int i = 0; i < count; i++) Serial.printf("GIF %s %u\n", names[i], (unsigned)sizes[i]);
+        Serial.printf("END %llu %s %s %u\n", freeBytes(), onSdCard() ? "SD" : "FLASH", currentGif[0] ? currentGif : "-",
+                      (unsigned)cycleSec);
+    } else if (!strcmp(cmd, "GIFPLAY")) {
+        char name[41];
+        if (sanitizeName(arg, name, sizeof(name)) && gifExists(name)) {
+            strcpy(currentGif, name);
+            applyMode(MODE_GIF);
+            saveSettings();
+        }
+    } else if (!strcmp(cmd, "GIFDEL")) {
+        char name[41], path[64];
+        if (sanitizeName(arg, name, sizeof(name))) {
+            bool playing = !strcmp(name, currentGif);
+            if (playing) closeGif();
+            gifPath(name, path, sizeof(path));
+            gifFs().remove(path);
+            if (playing) {
+                currentGif[0] = 0;
+                if (mode == MODE_GIF) applyMode(MODE_GIF);
+            }
+            saveSettings();
+        }
+        Serial.println("DONE");
+    } else if (!strcmp(cmd, "GIFCYCLE")) {
+        cycleSec = strtoul(arg, nullptr, 10);
+        cycleAtMs = millis() + cycleSec * 1000;
+        saveSettings();
     }
 }
 
@@ -341,9 +402,9 @@ void setup() {
     Serial.printf("chip %s rev %d, flash %u, PSRAM %u (free %u)\n", ESP.getChipModel(), ESP.getChipRevision(),
                   ESP.getFlashChipSize(), ESP.getPsramSize(), ESP.getFreePsram());
 
-    if (!LittleFS.begin(true)) Serial.println("ERR LittleFS mount failed");
     fatalError = initDisplay();
     if (fatalError) return;
+    initStorage();
     canvas = new Canvas(frameBuffer(), SCREEN_WIDTH, SCREEN_HEIGHT);
     gif.begin(GIF_PALETTE_RGB565_LE);
 
@@ -352,6 +413,8 @@ void setup() {
     dash.setTheme({prefs.getUInt("c0", 0x2D7CFF), prefs.getUInt("c1", 0xB22CFF)});
     dash.setTrack(prefs.getUInt("track", 0x1C1C24));
     dash.setTempColor(prefs.getBool("tempcolor", false));
+    prefs.getString("gif", currentGif, sizeof(currentGif));
+    cycleSec = prefs.getUInt("cycle", 0);
     setBrightness(brightness);
     applyMode((Mode)constrain(prefs.getUChar("mode", MODE_CPU), MODE_CPU, MODE_LIQUID));
 }
@@ -379,14 +442,26 @@ void loop() {
         return;
     }
 
+    if (gifOpen && cycleSec && (int32_t)(now - cycleAtMs) >= 0) {
+        if (pickGif(1)) openGif();
+        cycleAtMs = now + cycleSec * 1000;
+        return;
+    }
     if (!gifOpen || (int32_t)(now - nextFrameMs) < 0) {
         delay(1);
         return;
     }
     int delayMs = 0;
     int result = gif.playFrame(false, &delayMs);
-    memcpy(frameBuffer(), gifCanvas, FRAME_BYTES);
-    flushDisplay();
     if (result <= 0) gif.reset();
-    nextFrameMs = now + max(delayMs, 20);
+    uint32_t done = millis();
+    statFrames++;
+    statDecodeMs += done - now;
+    if (done - statAtMs >= 10000) {
+        Serial.printf("gif %s: %.1f fps, %lu ms/frame decode\n", currentGif, statFrames * 1000.0f / (done - statAtMs),
+                      (unsigned long)(statDecodeMs / (statFrames ? statFrames : 1)));
+        statAtMs = done;
+        statFrames = statDecodeMs = 0;
+    }
+    nextFrameMs = now + max(delayMs, 10);
 }

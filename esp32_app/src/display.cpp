@@ -45,6 +45,20 @@ uint16_t *frameBuffer() {
     return buffers[1 - front];
 }
 
+uint16_t *visibleBuffer() {
+    return buffers[front];
+}
+
+bool prepareSdPins() {
+    if (!board || !board->getIO_Expander()) return false;
+    auto expander = board->getIO_Expander()->getBase();
+    expander->pinMode(2, OUTPUT);
+    expander->digitalWrite(2, HIGH);
+    expander->pinMode(3, OUTPUT);
+    expander->digitalWrite(3, HIGH);
+    return true;
+}
+
 void flushDisplay() {
     if (!board || !board->getLCD()) return;
     xSemaphoreTake(vsync, 0);
