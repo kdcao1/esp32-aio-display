@@ -82,8 +82,12 @@ class SettingsWindow(ctk.CTkToplevel):
     def _build_gifs(self, tab):
         tab.grid_columnconfigure(0, weight=1)
         tab.grid_rowconfigure(1, weight=1)
-        self.storage = ctk.CTkLabel(tab, text="Reading library...", anchor="w")
-        self.storage.grid(row=0, column=0, padx=8, pady=(6, 4), sticky="ew")
+        header = ctk.CTkFrame(tab, fg_color="transparent")
+        header.grid(row=0, column=0, padx=8, pady=(6, 4), sticky="ew")
+        self.storage = ctk.CTkLabel(header, text="Reading library...", anchor="w", wraplength=300, justify="left")
+        self.storage.pack(side="left")
+        self.format_btn = ctk.CTkButton(header, text="Format SD card", width=110, fg_color="#8B2C2C",
+                                        hover_color="#A33636", command=self._format_sd)
 
         self.gif_list = ctk.CTkScrollableFrame(tab, height=170)
         self.gif_list.grid(row=1, column=0, padx=8, sticky="nsew")
@@ -145,8 +149,18 @@ class SettingsWindow(ctk.CTkToplevel):
         if info is None:
             self.storage.configure(text="Device not connected")
             return
-        where = "SD card" if info["storage"] == "SD" else "Internal flash (no SD card found)"
+        sd = info.get("sd") or ""
+        if info["storage"] == "SD":
+            where = "SD card"
+        elif sd.startswith("UNREADABLE"):
+            where = "SD card isn't FAT32, using internal flash"
+        else:
+            where = "No SD card detected, using internal flash"
         self.storage.configure(text=f"{where} - {format_bytes(info['free'])} free")
+        if sd.startswith("UNREADABLE"):
+            self.format_btn.pack(side="right")
+        else:
+            self.format_btn.pack_forget()
         if self.selected not in {name for name, _ in info["gifs"]}:
             self.selected = info["current"]
         for i, (name, size) in enumerate(info["gifs"]):
@@ -182,6 +196,20 @@ class SettingsWindow(ctk.CTkToplevel):
         if name and messagebox.askyesno("Cooler Screen", f"Delete '{name}' from the screen?", parent=self):
             self.selected = None
             self.app.delete_gif(name, lambda _: self.refresh_gifs())
+
+    def _format_sd(self):
+        if not messagebox.askyesno("Cooler Screen", "Format the SD card as FAT32?\n\nEverything on the card will be erased.",
+                                   icon="warning", parent=self):
+            return
+        self.format_btn.configure(state="disabled", text="Formatting...")
+
+        def done(result):
+            self.format_btn.configure(state="normal", text="Format SD card")
+            if not result or not result.startswith("OK"):
+                messagebox.showerror("Cooler Screen", f"Couldn't format the SD card: {result or 'no response'}", parent=self)
+            self.refresh_gifs()
+
+        self.app.format_sd(done)
 
     def _on_quality(self, label):
         self.app.set_gif_quality(next(k for k, v in QUALITY_LABELS.items() if v == label))

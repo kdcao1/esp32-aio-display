@@ -132,6 +132,9 @@ class App:
         self.comms.gif_play(name)
         self.icon.update_menu()
 
+    def format_sd(self, on_done):
+        self.run_async(self.comms.sd_format, on_done)
+
     def delete_gif(self, name, on_done):
         self.run_async(lambda: self.comms.gif_delete(name), on_done)
 

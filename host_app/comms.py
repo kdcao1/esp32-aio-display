@@ -196,7 +196,16 @@ class ESP32Comms:
                 info.update(free=int(parts[1]), storage=parts[2],
                             current=None if parts[3] == "-" else parts[3], cycle=int(parts[4]))
         info["gifs"] = gifs
+        info["sd"] = self.sd_info() if info["storage"] != "SD" else "OK"
         return info
+
+    def sd_info(self):
+        lines = self._query("SDINFO", "SDINFO")
+        return lines[-1].split(" ", 1)[1] if lines else None
+
+    def sd_format(self):
+        lines = self._query("SDFORMAT", "SDINFO", timeout=300)
+        return lines[-1].split(" ", 1)[1] if lines else None
 
     def gif_play(self, name):
         return self.send_command(f"GIFPLAY:{name}")

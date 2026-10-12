@@ -1,37 +1,97 @@
 #include "storage.h"
 
 #include <LittleFS.h>
-#include <SD_MMC.h>
+#include <vfs_api.h>
+#include <driver/sdmmc_host.h>
+#include <esp_vfs_fat.h>
+#include <sdmmc_cmd.h>
 
 #include "display.h"
 
-#define SD_CLK 2
-#define SD_CMD 1
-#define SD_D0 42
+#define SD_MOUNT "/sdcard"
 #define GIF_DIR "/gifs"
 
+class SdFs : public fs::FS {
+public:
+    SdFs() : FS(FSImplPtr(new VFSImpl())) {}
+    void attach(const char *mount) { _impl->mountpoint(mount); }
+};
+
+static SdFs sdFs;
+static sdmmc_card_t *card = nullptr;
 static bool sdOk = false;
+static char status[64] = "NOCARD not probed";
+
+static esp_err_t mountSd(int freqKhz, bool format) {
+    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+    host.flags = SDMMC_HOST_FLAG_1BIT;
+    host.max_freq_khz = freqKhz;
+    sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+    slot.width = 1;
+    slot.clk = GPIO_NUM_2;
+    slot.cmd = GPIO_NUM_1;
+    slot.d0 = GPIO_NUM_42;
+    slot.d1 = slot.d2 = slot.d3 = slot.d4 = slot.d5 = slot.d6 = slot.d7 = GPIO_NUM_NC;
+    slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+    esp_vfs_fat_sdmmc_mount_config_t cfg = {};
+    cfg.format_if_mount_failed = format;
+    cfg.max_files = 5;
+    cfg.allocation_unit_size = 32 * 1024;
+    return esp_vfs_fat_sdmmc_mount(SD_MOUNT, &host, &slot, &cfg, &card);
+}
+
+static bool startSd(bool format) {
+    if (sdOk) return true;
+    if (!prepareSdPins()) {
+        snprintf(status, sizeof(status), "NOCARD io expander unavailable");
+        return false;
+    }
+    esp_err_t err = mountSd(SDMMC_FREQ_DEFAULT, format);
+    if (err != ESP_OK && err != ESP_FAIL) err = mountSd(SDMMC_FREQ_PROBING, format);
+    if (err == ESP_OK) {
+        sdOk = true;
+        sdFs.attach(SD_MOUNT);
+        snprintf(status, sizeof(status), "OK %llu", (unsigned long long)card->csd.capacity * card->csd.sector_size);
+    } else if (err == ESP_FAIL) {
+        snprintf(status, sizeof(status), "UNREADABLE card is not FAT32");
+    } else {
+        snprintf(status, sizeof(status), "NOCARD %s", esp_err_to_name(err));
+    }
+    Serial.printf("sd: %s\n", status);
+    return sdOk;
+}
 
 bool initStorage() {
     if (!LittleFS.begin(true)) Serial.println("ERR LittleFS mount failed");
-    if (prepareSdPins() && SD_MMC.setPins(SD_CLK, SD_CMD, SD_D0) && SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT)) {
-        sdOk = SD_MMC.cardType() != CARD_NONE;
-    }
+    startSd(false);
     Serial.printf("storage: %s\n", sdOk ? "SD card" : "internal flash");
     if (!gifFs().exists(GIF_DIR)) gifFs().mkdir(GIF_DIR);
     return sdOk;
 }
 
+bool formatSd() {
+    if (!sdOk) startSd(true);
+    if (sdOk && !gifFs().exists(GIF_DIR)) gifFs().mkdir(GIF_DIR);
+    return sdOk;
+}
+
 fs::FS &gifFs() {
-    return sdOk ? (fs::FS &)SD_MMC : (fs::FS &)LittleFS;
+    return sdOk ? (fs::FS &)sdFs : (fs::FS &)LittleFS;
 }
 
 bool onSdCard() {
     return sdOk;
 }
 
+const char *sdStatus() {
+    return status;
+}
+
 uint64_t freeBytes() {
-    return sdOk ? SD_MMC.totalBytes() - SD_MMC.usedBytes() : LittleFS.totalBytes() - LittleFS.usedBytes();
+    if (!sdOk) return LittleFS.totalBytes() - LittleFS.usedBytes();
+    uint64_t total = 0, free = 0;
+    esp_vfs_fat_info(SD_MOUNT, &total, &free);
+    return free;
 }
 
 bool sanitizeName(const char *in, char *out, size_t n) {

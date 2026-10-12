@@ -370,6 +370,14 @@ static void handleCommand(char *cmd) {
             saveSettings();
         }
         Serial.println("DONE");
+    } else if (!strcmp(cmd, "SDINFO")) {
+        Serial.printf("SDINFO %s\n", sdStatus());
+    } else if (!strcmp(cmd, "SDFORMAT")) {
+        closeGif();
+        showMessage("PREPARING SD CARD", "");
+        formatSd();
+        Serial.printf("SDINFO %s\n", sdStatus());
+        applyMode(mode);
     } else if (!strcmp(cmd, "GIFCYCLE")) {
         cycleSec = strtoul(arg, nullptr, 10);
         cycleAtMs = millis() + cycleSec * 1000;

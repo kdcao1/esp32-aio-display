@@ -6,6 +6,8 @@
 bool initStorage();
 fs::FS &gifFs();
 bool onSdCard();
+const char *sdStatus();
+bool formatSd();
 uint64_t freeBytes();
 bool sanitizeName(const char *in, char *out, size_t n);
 void gifPath(const char *name, char *out, size_t n);
