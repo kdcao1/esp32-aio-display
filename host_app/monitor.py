@@ -1,60 +1,84 @@
-import sys
-import clr
+import ctypes
 import os
 import time
-import ctypes
+
+import clr
+
+CPU_TEMP_NAMES = ("Core (Tctl/Tdie)", "CPU Package", "Package", "Core Average", "Core Max")
+
 
 def is_admin():
     try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
         return False
 
-# Initialize the hardware monitor
-# Must be called as administrator for full access to CPU sensors
-def init_monitor():
-    if not is_admin():
-        print("WARNING: Not running as administrator. CPU Temps might not be available.")
-    
-    dll_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "LibreHardwareMonitorLib.dll"))
-    if not os.path.exists(dll_path):
-        raise FileNotFoundError(f"Could not find {dll_path}")
 
-    clr.AddReference(dll_path)
-    
-    from LibreHardwareMonitor import Hardware
-    computer = Hardware.Computer()
-    computer.IsCpuEnabled = True
-    computer.IsMotherboardEnabled = False
-    computer.IsGpuEnabled = False
-    computer.IsMemoryEnabled = False
-    computer.IsNetworkEnabled = False
-    computer.IsControllerEnabled = False
-    computer.IsStorageEnabled = False
+class HardwareMonitor:
+    def __init__(self):
+        dll_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LibreHardwareMonitorLib.dll")
+        if not os.path.exists(dll_path):
+            raise FileNotFoundError(f"Could not find {dll_path}")
+        clr.AddReference(dll_path)
 
-    computer.Open()
-    return computer
+        from LibreHardwareMonitor.Hardware import Computer, HardwareType
+        self.HardwareType = HardwareType
 
-def get_cpu_temp(computer):
-    # Iterate through hardware
-    for hardware in computer.Hardware:
-        if hardware.HardwareType == hardware.HardwareType.Cpu:
-            hardware.Update()
-            for sensor in hardware.Sensors:
-                if sensor.SensorType == sensor.SensorType.Temperature:
-                    if "Core (Tctl/Tdie)" in sensor.Name or "Package" in sensor.Name or "Core Average" in sensor.Name:
-                        if sensor.Value is not None:
-                            return sensor.Value
-            # Fallback if package temp is not found
-            for sensor in hardware.Sensors:
-                if sensor.SensorType == sensor.SensorType.Temperature:
-                    if sensor.Value is not None:
-                        return sensor.Value
-    return None
+        self.computer = Computer()
+        self.computer.IsCpuEnabled = True
+        self.computer.IsGpuEnabled = True
+        self.computer.Open()
+
+    def _collect(self, hardware):
+        hardware.Update()
+        readings = {}
+        for hw in [hardware, *hardware.SubHardware]:
+            if hw is not hardware:
+                hw.Update()
+            for s in hw.Sensors:
+                if s.Value is not None:
+                    readings.setdefault(str(s.SensorType), {})[str(s.Name)] = float(s.Value)
+        return readings
+
+    @staticmethod
+    def _pick(values, names):
+        for name in names:
+            for key, value in values.items():
+                if name in key:
+                    return value
+        return next(iter(values.values()), None)
+
+    def read(self):
+        HT = self.HardwareType
+        stats = {"cpu_temp": None, "cpu_load": None, "gpu_temp": None, "gpu_load": None}
+        gpus = []
+        for hw in self.computer.Hardware:
+            if hw.HardwareType == HT.Cpu and stats["cpu_temp"] is None:
+                readings = self._collect(hw)
+                stats["cpu_temp"] = self._pick(readings.get("Temperature", {}), CPU_TEMP_NAMES)
+                stats["cpu_load"] = readings.get("Load", {}).get("CPU Total")
+            elif hw.HardwareType in (HT.GpuNvidia, HT.GpuAmd, HT.GpuIntel):
+                gpus.append(hw)
+
+        gpus.sort(key=lambda h: h.HardwareType == HT.GpuIntel)
+        for hw in gpus:
+            readings = self._collect(hw)
+            temps = readings.get("Temperature", {})
+            if not temps:
+                continue
+            stats["gpu_temp"] = self._pick(temps, ("GPU Core", "GPU Hot Spot"))
+            stats["gpu_load"] = readings.get("Load", {}).get("GPU Core")
+            break
+        return stats
+
+    def close(self):
+        self.computer.Close()
+
 
 if __name__ == "__main__":
-    comp = init_monitor()
+    if not is_admin():
+        print("WARNING: Not running as administrator. CPU temps might not be available.")
+    monitor = HardwareMonitor()
     while True:
-        temp = get_cpu_temp(comp)
-        print(f"CPU Temp: {temp}°C")
+        print(monitor.read())
         time.sleep(1)

@@ -1,70 +1,118 @@
-import customtkinter as ctk
-from tkinter import filedialog
 import os
+from tkinter import colorchooser, filedialog
 
-class SettingsUI(ctk.CTk):
-    def __init__(self, comms_instance):
-        super().__init__()
-        self.comms = comms_instance
-        
-        self.title("Cooler Screen Settings")
-        self.geometry("400x300")
+import customtkinter as ctk
+
+import config
+
+CUSTOM = "Custom"
+
+
+class SettingsWindow(ctk.CTkToplevel):
+    def __init__(self, master, app):
+        super().__init__(master)
+        self.app = app
+        self.title("Cooler Screen")
+        self.geometry("420x520")
         self.resizable(False, False)
-        
-        # Configure grid
         self.grid_columnconfigure(0, weight=1)
-        
-        # Title Label
-        self.title_label = ctk.CTkLabel(self, text="Screen Mode Settings", font=ctk.CTkFont(size=20, weight="bold"))
-        self.title_label.grid(row=0, column=0, padx=20, pady=(20, 10))
-        
-        # Mode selection
-        self.mode_var = ctk.StringVar(value="TEMP")
-        
-        self.radio_temp = ctk.CTkRadioButton(self, text="Temperature Mode", variable=self.mode_var, value="TEMP", command=self.mode_changed)
-        self.radio_temp.grid(row=1, column=0, padx=20, pady=10, sticky="w")
-        
-        self.radio_gif = ctk.CTkRadioButton(self, text="GIF Mode", variable=self.mode_var, value="GIF", command=self.mode_changed)
-        self.radio_gif.grid(row=2, column=0, padx=20, pady=10, sticky="w")
-        
-        # GIF Upload Button
-        self.btn_upload = ctk.CTkButton(self, text="Upload GIF", command=self.upload_gif, state="disabled")
-        self.btn_upload.grid(row=3, column=0, padx=20, pady=20)
-        
-        # Status Label
-        self.status_label = ctk.CTkLabel(self, text="Connected" if self.comms.connected else "Not Connected", text_color="green" if self.comms.connected else "red")
-        self.status_label.grid(row=4, column=0, padx=20, pady=10)
+        self.protocol("WM_DELETE_WINDOW", self.withdraw)
 
-    def mode_changed(self):
-        mode = self.mode_var.get()
-        if mode == "TEMP":
-            self.btn_upload.configure(state="disabled")
-            self.comms.set_temp_mode()
-        else:
-            self.btn_upload.configure(state="normal")
-            self.comms.set_gif_mode()
+        ctk.CTkLabel(self, text="Cooler Screen", font=ctk.CTkFont(size=22, weight="bold")).grid(
+            row=0, column=0, padx=20, pady=(20, 4), sticky="w")
+        self.status = ctk.CTkLabel(self, text="", anchor="w", wraplength=380, justify="left")
+        self.status.grid(row=1, column=0, padx=20, sticky="ew")
 
-    def upload_gif(self):
-        file_path = filedialog.askopenfilename(
-            title="Select a GIF file",
-            filetypes=[("GIF Files", "*.gif")]
-        )
-        if file_path:
-            self.status_label.configure(text=f"Uploading {os.path.basename(file_path)}...", text_color="orange")
-            self.update() # Force update UI
-            success = self.comms.upload_gif(file_path)
-            if success:
-                self.status_label.configure(text="Upload Complete", text_color="green")
-            else:
-                self.status_label.configure(text="Upload Failed", text_color="red")
+        self._section("Display", 2)
+        labels = [config.MODE_LABELS[m] for m in config.MODES]
+        self.mode = ctk.CTkSegmentedButton(self, values=labels, command=self._on_mode)
+        self.mode.grid(row=3, column=0, padx=20, sticky="ew")
 
-def show_settings(comms_instance):
-    ctk.set_appearance_mode("dark")
-    ctk.set_default_color_theme("blue")
-    app = SettingsUI(comms_instance)
-    app.mainloop()
+        self._section("Ring colors", 4)
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.grid(row=5, column=0, padx=20, sticky="ew")
+        self.theme = ctk.CTkOptionMenu(row, values=[*config.THEMES, CUSTOM], command=self._on_theme, width=150)
+        self.theme.pack(side="left")
+        self.swatch_end = ctk.CTkButton(row, text="", width=36, command=lambda: self._pick_color(1))
+        self.swatch_end.pack(side="right")
+        self.swatch_start = ctk.CTkButton(row, text="", width=36, command=lambda: self._pick_color(0))
+        self.swatch_start.pack(side="right", padx=8)
 
-if __name__ == "__main__":
-    from comms import ESP32Comms
-    dummy_comms = ESP32Comms()
-    show_settings(dummy_comms)
+        self._section("Brightness", 6)
+        self.brightness = ctk.CTkSlider(self, from_=5, to=100, number_of_steps=19, command=self._on_brightness)
+        self.brightness.grid(row=7, column=0, padx=20, sticky="ew")
+
+        self._section("Animated GIF", 8)
+        self.upload_btn = ctk.CTkButton(self, text="Upload GIF...", command=self._upload)
+        self.upload_btn.grid(row=9, column=0, padx=20, sticky="w")
+        self.progress = ctk.CTkProgressBar(self)
+        self.progress.set(0)
+        self.progress.grid(row=10, column=0, padx=20, pady=(10, 0), sticky="ew")
+        self.upload_status = ctk.CTkLabel(self, text="GIFs are cropped to 480x480 before upload.", anchor="w")
+        self.upload_status.grid(row=11, column=0, padx=20, sticky="ew")
+
+        self.refresh()
+        self._poll_status()
+
+    def _section(self, text, row):
+        ctk.CTkLabel(self, text=text, font=ctk.CTkFont(size=14, weight="bold")).grid(
+            row=row, column=0, padx=20, pady=(18, 6), sticky="w")
+
+    def refresh(self):
+        cfg = self.app.cfg
+        self.mode.set(config.MODE_LABELS[cfg["mode"]])
+        self.theme.set(cfg["theme"] if cfg["theme"] in config.THEMES else CUSTOM)
+        self.swatch_start.configure(fg_color=cfg["color_start"], hover_color=cfg["color_start"])
+        self.swatch_end.configure(fg_color=cfg["color_end"], hover_color=cfg["color_end"])
+        self.brightness.set(cfg["brightness"])
+
+    def _poll_status(self):
+        if not self.winfo_exists():
+            return
+        text, color = self.app.status_text()
+        self.status.configure(text=text, text_color=color)
+        self.after(1000, self._poll_status)
+
+    def _on_mode(self, label):
+        mode = next(m for m, l in config.MODE_LABELS.items() if l == label)
+        self.app.set_mode(mode)
+
+    def _on_theme(self, name):
+        if name in config.THEMES:
+            self.app.set_theme(name, *config.THEMES[name])
+        self.refresh()
+
+    def _pick_color(self, index):
+        key = ("color_start", "color_end")[index]
+        _, hex_color = colorchooser.askcolor(color=self.app.cfg[key], parent=self)
+        if not hex_color:
+            return
+        colors = [self.app.cfg["color_start"], self.app.cfg["color_end"]]
+        colors[index] = hex_color.upper()
+        self.app.set_theme(CUSTOM, *colors)
+        self.refresh()
+
+    def _on_brightness(self, value):
+        self.app.set_brightness(value)
+
+    def _upload(self):
+        path = filedialog.askopenfilename(parent=self, title="Select a GIF", filetypes=[("GIF files", "*.gif")])
+        if not path:
+            return
+        self.upload_btn.configure(state="disabled")
+        self.progress.set(0)
+        self.upload_status.configure(text=f"Preparing {os.path.basename(path)}...", text_color="orange")
+        self.app.upload_gif(path, self._on_progress, self._on_upload_done)
+
+    def _on_progress(self, fraction):
+        self.progress.set(fraction)
+        self.upload_status.configure(text=f"Uploading... {fraction * 100:.0f}%")
+
+    def _on_upload_done(self, error):
+        self.upload_btn.configure(state="normal")
+        if error:
+            self.upload_status.configure(text=f"Upload failed: {error}", text_color="red")
+            return
+        self.progress.set(1)
+        self.upload_status.configure(text="Upload complete", text_color="green")
+        self.app.set_mode("GIF")

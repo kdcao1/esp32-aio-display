@@ -1,78 +1,154 @@
+import threading
+import time
+import zlib
+
 import serial
 import serial.tools.list_ports
-import time
-import os
+
+ESPRESSIF_VID = 0x303A
+BRIDGE_HINTS = ("CH340", "CH343", "CP210", "USB Serial", "USB-SERIAL", "USB JTAG")
+CHUNK = 4096
+
+
+class UploadError(Exception):
+    pass
+
 
 class ESP32Comms:
-    def __init__(self, port=None, baudrate=115200):
+    def __init__(self, port=None, baudrate=921600):
         self.port = port
         self.baudrate = baudrate
         self.ser = None
-        self.connected = False
+        self.lock = threading.RLock()
+        self._last_attempt = 0.0
 
-    def autodiscover(self):
-        ports = serial.tools.list_ports.comports()
-        for p in ports:
-            if "CH340" in p.description or "CP210" in p.description or "USB Serial" in p.description:
-                return p.device
-        return None
+    @property
+    def connected(self):
+        return self.ser is not None and self.ser.is_open
 
-    def connect(self):
-        if not self.port:
-            self.port = self.autodiscover()
-        
+    def _candidates(self):
+        ports = list(serial.tools.list_ports.comports())
         if self.port:
-            try:
-                self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
-                self.connected = True
-                print(f"Connected to ESP32 on {self.port}")
+            return [self.port]
+        preferred = [p.device for p in ports if p.vid == ESPRESSIF_VID]
+        others = [p.device for p in ports if p.device not in preferred
+                  and any(h.lower() in (p.description or "").lower() for h in BRIDGE_HINTS)]
+        return preferred + others
+
+    def _open(self, device):
+        ser = serial.Serial()
+        ser.port = device
+        ser.baudrate = self.baudrate
+        ser.timeout = 0.2
+        ser.write_timeout = 2
+        ser.dtr = False
+        ser.rts = False
+        ser.open()
+        return ser
+
+    def _handshake(self, ser):
+        ser.reset_input_buffer()
+        ser.write(b"PING\n")
+        deadline = time.time() + 1.5
+        while time.time() < deadline:
+            line = ser.readline().decode(errors="ignore").strip()
+            if line.startswith("PONG COOLERSCREEN"):
                 return True
-            except Exception as e:
-                print(f"Failed to connect to {self.port}: {e}")
         return False
 
+    def connect(self):
+        with self.lock:
+            if self.connected:
+                return True
+            self._last_attempt = time.time()
+            for device in self._candidates():
+                try:
+                    ser = self._open(device)
+                except (serial.SerialException, OSError):
+                    continue
+                try:
+                    if self._handshake(ser):
+                        self.ser = ser
+                        print(f"Connected to Cooler Screen on {device}")
+                        return True
+                except (serial.SerialException, OSError):
+                    pass
+                ser.close()
+            return False
+
+    def ensure_connected(self, retry_interval=3.0):
+        if self.connected:
+            return True
+        if time.time() - self._last_attempt < retry_interval:
+            return False
+        return self.connect()
+
     def disconnect(self):
-        if self.ser and self.ser.is_open:
-            self.ser.close()
-        self.connected = False
+        with self.lock:
+            if self.ser:
+                try:
+                    self.ser.close()
+                except (serial.SerialException, OSError):
+                    pass
+            self.ser = None
+
+    @property
+    def device(self):
+        return self.ser.port if self.connected else None
 
     def send_command(self, cmd):
-        if self.connected and self.ser.is_open:
+        with self.lock:
+            if not self.connected:
+                return False
             try:
                 self.ser.write((cmd + "\n").encode())
                 return True
-            except Exception as e:
+            except (serial.SerialException, OSError) as e:
                 print(f"Serial write error: {e}")
-                self.connected = False
-        return False
+                self.disconnect()
+                return False
 
-    def set_temp_mode(self):
-        return self.send_command("MODE:TEMP")
+    def set_mode(self, mode):
+        return self.send_command(f"MODE:{mode}")
 
-    def set_gif_mode(self):
-        return self.send_command("MODE:GIF")
+    def set_theme(self, c0, c1):
+        return self.send_command(f"THEME:{c0.lstrip('#')},{c1.lstrip('#')}")
 
-    def update_temp(self, temp_val):
-        return self.send_command(f"TEMP:{temp_val:.1f}")
+    def set_brightness(self, percent):
+        return self.send_command(f"BRIGHT:{int(percent)}")
 
-    def upload_gif(self, file_path):
-        if not os.path.exists(file_path):
-            return False
-            
-        file_size = os.path.getsize(file_path)
-        print(f"Uploading GIF of size {file_size} bytes...")
-        if self.send_command(f"UPLOAD:{file_size}"):
-            # Wait for ACK from ESP32
-            time.sleep(0.5)
-            # Send file in chunks
+    def send_stats(self, cpu_temp, cpu_load, gpu_temp, gpu_load):
+        def fmt(v):
+            return "" if v is None else f"{v:.1f}"
+        return self.send_command("STAT:" + ",".join(fmt(v) for v in (cpu_temp, cpu_load, gpu_temp, gpu_load)))
+
+    def _expect(self, prefix, timeout):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            line = self.ser.readline().decode(errors="ignore").strip()
+            if line.startswith(prefix):
+                return line
+            if line.startswith("ERR"):
+                raise UploadError(line)
+        raise UploadError(f"Timed out waiting for {prefix}")
+
+    def upload_gif(self, data, progress=None):
+        with self.lock:
+            if not self.connected:
+                raise UploadError("Device not connected")
             try:
-                with open(file_path, "rb") as f:
-                    while chunk := f.read(1024):
-                        self.ser.write(chunk)
-                        # Minimal delay to not overwhelm the serial buffer
-                        time.sleep(0.01)
-                print("Upload complete.")
-                return True
-            except Exception as e:
-                print(f"Upload failed: {e}")
-        return False
+                self.ser.reset_input_buffer()
+                self.ser.write(f"UPLOAD:{len(data)},{zlib.crc32(data):08X}\n".encode())
+                self._expect("READY", 5)
+                sent = 0
+                while sent < len(data):
+                    chunk = data[sent:sent + CHUNK]
+                    self.ser.write(chunk)
+                    sent += len(chunk)
+                    self._expect("ACK", 10)
+                    if progress:
+                        progress(sent / len(data))
+                self._expect("OK", 10)
+            except (serial.SerialException, OSError) as e:
+                self.disconnect()
+                raise UploadError(str(e))
