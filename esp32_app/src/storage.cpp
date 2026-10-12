@@ -1,6 +1,7 @@
 #include "storage.h"
 
 #include <LittleFS.h>
+#include <vector>
 #include <vfs_api.h>
 #include <driver/sdmmc_host.h>
 #include <esp_vfs_fat.h>
@@ -61,17 +62,74 @@ static bool startSd(bool format) {
     return sdOk;
 }
 
+static bool copyFile(fs::FS &from, const char *src, fs::FS &to, const char *dst) {
+    static uint8_t chunk[16384];
+    File in = from.open(src, "r");
+    File out = to.open(dst, "w");
+    bool ok = in && out;
+    while (ok && in.available()) {
+        size_t n = in.read(chunk, sizeof(chunk));
+        ok = n > 0 && out.write(chunk, n) == n;
+    }
+    if (in) in.close();
+    if (out) out.close();
+    if (!ok) to.remove(dst);
+    return ok;
+}
+
+static int migrateFromFlash() {
+    char src[64], dst[64];
+    int moved = 0;
+    std::vector<String> names;
+    if (File dir = LittleFS.open(GIF_DIR)) {
+        for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
+            String name = f.name();
+            int slash = name.lastIndexOf('/');
+            if (slash >= 0) name = name.substring(slash + 1);
+            if (!f.isDirectory() && name.endsWith(".gif")) names.push_back(name.substring(0, name.length() - 4));
+            f.close();
+        }
+    }
+    if (LittleFS.exists("/anim.gif")) names.push_back("");
+
+    for (const String &name : names) {
+        if (name.length()) snprintf(src, sizeof(src), GIF_DIR "/%s.gif", name.c_str());
+        else strcpy(src, "/anim.gif");
+        String target = name.length() ? name : String("old-gif");
+        snprintf(dst, sizeof(dst), GIF_DIR "/%s.gif", target.c_str());
+        bool ok = sdFs.exists(dst) || copyFile(LittleFS, src, sdFs, dst);
+        if (ok) {
+            LittleFS.remove(src);
+            moved++;
+        }
+        Serial.printf("migrate %s -> %s: %s\n", src, dst, ok ? "ok" : "failed");
+    }
+    return moved;
+}
+
 bool initStorage() {
     if (!LittleFS.begin(true)) Serial.println("ERR LittleFS mount failed");
     startSd(false);
     Serial.printf("storage: %s\n", sdOk ? "SD card" : "internal flash");
     if (!gifFs().exists(GIF_DIR)) gifFs().mkdir(GIF_DIR);
+    if (sdOk) {
+        setBacklight(false);
+        migrateFromFlash();
+        resyncDisplay();
+        setBacklight(true);
+    }
     return sdOk;
 }
 
 bool formatSd() {
     if (!sdOk) startSd(true);
     if (sdOk && !gifFs().exists(GIF_DIR)) gifFs().mkdir(GIF_DIR);
+    if (sdOk) {
+        setBacklight(false);
+        migrateFromFlash();
+        resyncDisplay();
+        setBacklight(true);
+    }
     return sdOk;
 }
 
