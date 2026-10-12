@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <AnimatedGIF.h>
+#include <esp_app_desc.h>
 
 #include "display.h"
 #include "dashboard.h"
@@ -30,6 +31,9 @@ static uint8_t *gifData = nullptr;
 static uint16_t *gifTarget = nullptr;
 static char currentGif[41] = "";
 static bool smoothPref = false;
+static int rotation = 0;
+static bool screenOn = true, backlightOn = true;
+static uint32_t sleepSec = 60, lastHostMs = 0;
 static uint32_t cycleSec = 0, cycleAtMs = 0;
 static uint32_t statFrames = 0, statDecodeMs = 0, statAtMs = 0;
 static uint32_t lastRenderMs = 0;
@@ -70,9 +74,26 @@ static void GIFDraw(GIFDRAW *p) {
     int x0 = gifOffX + p->iX * s;
     int w = min(p->iWidth, (SCREEN_WIDTH - x0) / s);
     if (x0 < 0 || w <= 0) return;
-    uint16_t *row = gifTarget + y * SCREEN_WIDTH + x0;
     bool transparent = p->ucHasTransparency;
     uint8_t key = p->ucTransparent;
+    if (rotation) {
+        for (int i = 0; i < w; i++) {
+            uint8_t c = src[i];
+            if (transparent && c == key) continue;
+            uint16_t v = pal[c];
+            for (int dy = 0; dy < s; dy++) {
+                for (int dx = 0; dx < s; dx++) {
+                    int x = x0 + i * s + dx, yy = y + dy, tx = x, ty = yy;
+                    if (rotation == 1) { tx = SCREEN_WIDTH - 1 - yy; ty = x; }
+                    else if (rotation == 2) { tx = SCREEN_WIDTH - 1 - x; ty = SCREEN_HEIGHT - 1 - yy; }
+                    else { tx = yy; ty = SCREEN_HEIGHT - 1 - x; }
+                    gifTarget[ty * SCREEN_WIDTH + tx] = v;
+                }
+            }
+        }
+        return;
+    }
+    uint16_t *row = gifTarget + y * SCREEN_WIDTH + x0;
     if (s == 1) {
         for (int i = 0; i < w; i++) {
             uint8_t c = src[i];
@@ -173,6 +194,8 @@ static void writeSettings() {
     prefs.putString("gif", currentGif);
     prefs.putUInt("cycle", cycleSec);
     prefs.putBool("smooth", smoothPref);
+    prefs.putUChar("rotation", (uint8_t)rotation);
+    prefs.putUInt("sleep", sleepSec);
     resyncDisplay();
 }
 
@@ -381,6 +404,23 @@ static void handleCommand(char *cmd) {
             saveSettings();
         }
         Serial.println("DONE");
+    } else if (!strcmp(cmd, "VERSION")) {
+        const uint8_t *sha = esp_app_get_description()->app_elf_sha256;
+        Serial.printf("VERSION %02x%02x%02x%02x%02x%02x%02x%02x %d\n", sha[0], sha[1], sha[2], sha[3], sha[4], sha[5],
+                      sha[6], sha[7], PROTOCOL_VERSION);
+    } else if (!strcmp(cmd, "ROTATE")) {
+        int r = (atoi(arg) / 90) & 3;
+        if (r != rotation) {
+            rotation = r;
+            canvas->setRotation(rotation);
+            applyMode(mode);
+            saveSettings();
+        }
+    } else if (!strcmp(cmd, "SCREEN")) {
+        screenOn = strcmp(arg, "OFF") != 0;
+    } else if (!strcmp(cmd, "SLEEP")) {
+        sleepSec = strtoul(arg, nullptr, 10);
+        saveSettings();
     } else if (!strcmp(cmd, "QUALITY")) {
         bool smooth = !strcmp(arg, "SMOOTH");
         if (smooth != smoothPref) {
@@ -409,6 +449,7 @@ static void processSerial() {
         if (c == '\n') {
             line[lineLen] = 0;
             lineLen = 0;
+            lastHostMs = millis();
             handleCommand(line);
             if (mode == MODE_GIF && !gifOpen) return;
         } else if (c != '\r' && lineLen < sizeof(line) - 1) {
@@ -442,6 +483,9 @@ void setup() {
     prefs.getString("gif", currentGif, sizeof(currentGif));
     cycleSec = prefs.getUInt("cycle", 0);
     smoothPref = prefs.getBool("smooth", false);
+    rotation = prefs.getUChar("rotation", 0) & 3;
+    canvas->setRotation(rotation);
+    sleepSec = prefs.getUInt("sleep", 60);
     setBrightness(brightness);
     applyMode((Mode)constrain(prefs.getUChar("mode", MODE_CPU), MODE_CPU, MODE_LIQUID));
 }
@@ -457,6 +501,22 @@ void loop() {
     if (saveAtMs && (int32_t)(now - saveAtMs) >= 0) {
         saveAtMs = 0;
         writeSettings();
+    }
+
+    bool wantOn = screenOn && !(sleepSec && now - lastHostMs > sleepSec * 1000);
+    if (wantOn != backlightOn) {
+        backlightOn = wantOn;
+        if (wantOn) {
+            setBacklight(true);
+            setBrightness(brightness);
+            nextFrameMs = now;
+        } else {
+            setBacklight(false);
+        }
+    }
+    if (!backlightOn) {
+        delay(20);
+        return;
     }
 
     if (mode != MODE_GIF) {

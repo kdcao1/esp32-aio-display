@@ -30,7 +30,13 @@ void Canvas::clear(uint16_t color) {
 
 void Canvas::blend(int x, int y, uint32_t rgb, uint8_t alpha) {
     if (x < 0 || y < 0 || x >= w || y >= h || alpha == 0) return;
-    uint16_t &d = px[y * w + x];
+    int tx = x, ty = y;
+    switch (rot) {
+    case 1: tx = w - 1 - y; ty = x; break;
+    case 2: tx = w - 1 - x; ty = h - 1 - y; break;
+    case 3: tx = y; ty = h - 1 - x; break;
+    }
+    uint16_t &d = px[ty * w + tx];
     if (alpha == 255) {
         d = rgb565(rgb);
         return;

@@ -26,10 +26,11 @@ struct ArcStyle {
 
 class Canvas {
 public:
-    Canvas(uint16_t *pixels, int width, int height) : px(pixels), w(width), h(height) {}
+    Canvas(uint16_t *pixels, int width, int height) : px(pixels), w(width), h(height), rot(0) {}
 
     uint16_t *pixels() { return px; }
     void setPixels(uint16_t *pixels) { px = pixels; }
+    void setRotation(int quarterTurns) { rot = quarterTurns & 3; }
     int width() const { return w; }
     int height() const { return h; }
 
@@ -46,6 +47,7 @@ public:
 private:
     uint16_t *px;
     int w, h;
+    int rot;
 };
 
 uint32_t lerpColor(uint32_t a, uint32_t b, float t);
