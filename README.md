@@ -43,11 +43,11 @@ Newline-terminated commands:
 
 | Command | Description |
 | --- | --- |
-| `PING` | Replies `PONG COOLERSCREEN 3` |
+| `PING` | Replies `PONG COOLERSCREEN 4` |
 | `STAT:<cpuT>,<cpuLoad>,<gpuT>,<gpuLoad>,<liquidT>,<pumpRpm>,<fanRpm>` | Empty field = unavailable |
 | `MODE:CPU\|GPU\|DUAL\|LIQUID\|GIF` | |
 | `COLORMODE:GRADIENT\|TEMP` | Gradient along the ring, or one color picked by temperature |
 | `THEME:<RRGGBB>,<RRGGBB>` | Ring gradient |
 | `BRIGHT:<5-100>` | |
 | `TRACK:<RRGGBB>` | Gauge track color |
-| `UPLOAD:<size>,<crc32 hex>` | Device replies `READY`, then `ACK <n>` after each 4096-byte chunk, then `OK` or `ERR <reason>` |
+| `UPLOAD:<size>,<crc32 hex>` | Device replies `READY`. Each 4096-byte chunk is followed by its CRC32 (4 bytes, little-endian); the device replies `ACK <n>` or `NAK <n> <reason>` (resend the chunk). The file is buffered in PSRAM and written to flash at the end, then `OK <resends>` or `ERR <reason>` |

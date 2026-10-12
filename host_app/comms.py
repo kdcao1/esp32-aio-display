@@ -22,6 +22,8 @@ class ESP32Comms:
         self.lock = threading.RLock()
         self._last_attempt = 0.0
         self._pending = b""
+        self.uploading = False
+        self._deferred = {}
 
     @property
     def connected(self):
@@ -58,6 +60,8 @@ class ESP32Comms:
     def _handshake(self, ser):
         ser.reset_input_buffer()
         self._pending = b""
+        self.uploading = False
+        self._deferred = {}
         ser.write(b"PING\n")
         deadline = time.time() + 1.5
         while (line := self._readline(ser, deadline)) is not None:
@@ -106,6 +110,9 @@ class ESP32Comms:
         return self.ser.port if self.connected else None
 
     def send_command(self, cmd):
+        if self.uploading:
+            self._deferred[cmd.split(":", 1)[0]] = cmd
+            return True
         with self.lock:
             if not self.connected:
                 return False
@@ -146,10 +153,20 @@ class ESP32Comms:
                 raise UploadError(line)
         raise UploadError(f"Timed out waiting for {prefix}")
 
+    def _expect_any(self, prefixes, timeout):
+        deadline = time.time() + timeout
+        while (line := self._readline(self.ser, deadline)) is not None:
+            if line.startswith(prefixes):
+                return line
+            if line.startswith("ERR"):
+                raise UploadError(line)
+        raise UploadError(f"Timed out waiting for {'/'.join(prefixes)}")
+
     def upload_gif(self, data, progress=None):
         with self.lock:
             if not self.connected:
                 raise UploadError("Device not connected")
+            self.uploading = True
             try:
                 self.ser.reset_input_buffer()
                 self._pending = b""
@@ -158,12 +175,18 @@ class ESP32Comms:
                 sent = 0
                 while sent < len(data):
                     chunk = data[sent:sent + CHUNK]
-                    self.ser.write(chunk)
-                    sent += len(chunk)
-                    self._expect("ACK", 10)
-                    if progress:
-                        progress(sent / len(data))
-                self._expect("OK", 15)
+                    self.ser.write(chunk + zlib.crc32(chunk).to_bytes(4, "little"))
+                    if self._expect_any(("ACK", "NAK"), 10).startswith("ACK"):
+                        sent += len(chunk)
+                        if progress:
+                            progress(sent / len(data))
+                retries = self._expect("OK", 90).split()[1:]
+                return int(retries[0]) if retries else 0
             except (serial.SerialException, OSError) as e:
                 self.disconnect()
                 raise UploadError(str(e))
+            finally:
+                self.uploading = False
+                deferred, self._deferred = self._deferred, {}
+                for cmd in deferred.values():
+                    self.send_command(cmd)

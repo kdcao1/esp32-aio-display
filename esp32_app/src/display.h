@@ -9,3 +9,5 @@ const char *initDisplay();
 uint16_t *frameBuffer();
 void flushDisplay();
 void setBrightness(int percent);
+void setBacklight(bool on);
+void resyncDisplay();

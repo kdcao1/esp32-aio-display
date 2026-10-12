@@ -6,10 +6,12 @@
 #include "display.h"
 #include "dashboard.h"
 
-#define PROTOCOL_VERSION 3
+#define PROTOCOL_VERSION 4
 #define GIF_PATH "/anim.gif"
 #define UPLOAD_CHUNK 4096
-#define UPLOAD_TIMEOUT_MS 5000
+#define CHUNK_TIMEOUT_MS 1500
+#define UPLOAD_RETRIES 8
+#define SAVE_DELAY_MS 2000
 #define FS_MARGIN 16384
 
 enum Mode { MODE_CPU, MODE_GPU, MODE_DUAL, MODE_GIF, MODE_LIQUID };
@@ -27,6 +29,7 @@ static int gifOffX = 0, gifOffY = 0, gifScale = 1;
 static uint32_t nextFrameMs = 0;
 
 static const char *fatalError = nullptr;
+static uint32_t saveAtMs = 0;
 static char line[256];
 static size_t lineLen = 0;
 
@@ -116,7 +119,7 @@ static void applyMode(Mode m) {
     flushDisplay();
 }
 
-static void saveSettings() {
+static void writeSettings() {
     Theme t = dash.getTheme();
     prefs.putUChar("mode", (uint8_t)mode);
     prefs.putUInt("c0", t.c0);
@@ -124,6 +127,12 @@ static void saveSettings() {
     prefs.putUInt("track", dash.getTrack());
     prefs.putBool("tempcolor", dash.getTempColor());
     prefs.putUChar("bright", (uint8_t)brightness);
+    resyncDisplay();
+}
+
+static void saveSettings() {
+    saveAtMs = millis() + SAVE_DELAY_MS;
+    if (!saveAtMs) saveAtMs = 1;
 }
 
 static float parseField(char *&cursor) {
@@ -134,21 +143,48 @@ static float parseField(char *&cursor) {
     return v;
 }
 
-static bool readExact(uint8_t *buf, size_t len) {
+static bool readExact(uint8_t *buf, size_t len, uint32_t timeoutMs) {
     size_t got = 0;
     uint32_t last = millis();
     while (got < len) {
         int n = Serial.available();
         if (n > 0) {
-            got += Serial.readBytes(buf + got, min((size_t)n, len - got));
+            got += Serial.read(buf + got, min((size_t)n, len - got));
             last = millis();
-        } else if (millis() - last > UPLOAD_TIMEOUT_MS) {
+        } else if (millis() - last > timeoutMs) {
             return false;
         } else {
             delay(1);
         }
     }
     return true;
+}
+
+static void drainSerial() {
+    uint32_t last = millis();
+    while (millis() - last < 100) {
+        if (Serial.available()) {
+            Serial.read();
+            last = millis();
+        } else {
+            delay(1);
+        }
+    }
+}
+
+static bool writeGifFile(const uint8_t *data, size_t size) {
+    LittleFS.remove(GIF_PATH);
+    File f = LittleFS.open(GIF_PATH, "w");
+    if (!f) return false;
+    size_t written = 0;
+    while (written < size) {
+        size_t n = f.write(data + written, min((size_t)32768, size - written));
+        if (n == 0) break;
+        written += n;
+    }
+    f.close();
+    if (written != size) LittleFS.remove(GIF_PATH);
+    return written == size;
 }
 
 static void handleUpload(char *args) {
@@ -167,10 +203,9 @@ static void handleUpload(char *args) {
     }
 
     closeGif();
-    LittleFS.remove(GIF_PATH);
-    File f = LittleFS.open(GIF_PATH, "w");
-    if (!f) {
-        Serial.println("ERR FS");
+    uint8_t *data = (uint8_t *)heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+    if (!data) {
+        Serial.println("ERR MEM");
         applyMode(mode);
         return;
     }
@@ -178,33 +213,46 @@ static void handleUpload(char *args) {
     showMessage("RECEIVING GIF", "");
     Serial.println("READY");
 
-    static uint8_t buf[UPLOAD_CHUNK];
-    uint32_t crc = 0;
     long received = 0;
+    int retries = 0;
     const char *error = nullptr;
-    while (received < size) {
+    while (received < size && !error) {
         size_t chunk = min((long)UPLOAD_CHUNK, size - received);
-        if (!readExact(buf, chunk)) {
-            error = "TIMEOUT";
-            break;
+        uint8_t trailer[4];
+        const char *reason = nullptr;
+        if (!readExact(data + received, chunk, CHUNK_TIMEOUT_MS) || !readExact(trailer, 4, CHUNK_TIMEOUT_MS)) {
+            reason = "TIMEOUT";
+        } else {
+            uint32_t sent = trailer[0] | (trailer[1] << 8) | (trailer[2] << 16) | ((uint32_t)trailer[3] << 24);
+            if (crc32Update(0, data + received, chunk) != sent) reason = "CRC";
         }
-        if (f.write(buf, chunk) != chunk) {
-            error = "WRITE";
-            break;
+        if (reason) {
+            if (++retries > UPLOAD_RETRIES) {
+                error = reason;
+                break;
+            }
+            drainSerial();
+            Serial.printf("NAK %ld %s\n", received, reason);
+            continue;
         }
-        crc = crc32Update(crc, buf, chunk);
         received += chunk;
         Serial.printf("ACK %ld\n", received);
     }
-    f.close();
 
-    if (!error && crc != expected) error = "CRC";
-    if (error) {
-        LittleFS.remove(GIF_PATH);
-        Serial.printf("ERR %s\n", error);
-    } else {
-        Serial.println("OK");
+    if (!error && crc32Update(0, data, size) != expected) error = "CRC";
+    if (!error) {
+        showMessage("SAVING GIF", "");
+        delay(50);
+        setBacklight(false);
+        bool ok = writeGifFile(data, size);
+        resyncDisplay();
+        setBacklight(true);
+        if (!ok) error = "WRITE";
     }
+    free(data);
+
+    if (error) Serial.printf("ERR %s\n", error);
+    else Serial.printf("OK %d\n", retries);
     applyMode(mode);
 }
 
@@ -272,13 +320,13 @@ static void processSerial() {
 }
 
 void setup() {
-    Serial.setRxBufferSize(UPLOAD_CHUNK * 2);
+    size_t rxBuffer = Serial.setRxBufferSize(UPLOAD_CHUNK * 4);
     Serial.begin(921600);
     Serial.setTimeout(50);
     for (uint32_t start = millis(); !Serial && millis() - start < 3000;) delay(10);
     Serial.setDebugOutput(true);
 
-    Serial.printf("CoolerScreen protocol %d\n", PROTOCOL_VERSION);
+    Serial.printf("CoolerScreen protocol %d, rx buffer %u\n", PROTOCOL_VERSION, rxBuffer);
     Serial.printf("chip %s rev %d, flash %u, PSRAM %u (free %u)\n", ESP.getChipModel(), ESP.getChipRevision(),
                   ESP.getFlashChipSize(), ESP.getPsramSize(), ESP.getFreePsram());
 
@@ -305,6 +353,10 @@ void loop() {
     }
     processSerial();
     uint32_t now = millis();
+    if (saveAtMs && (int32_t)(now - saveAtMs) >= 0) {
+        saveAtMs = 0;
+        writeSettings();
+    }
 
     if (mode != MODE_GIF) {
         if (dash.update(now)) {

@@ -1,6 +1,7 @@
 #include "display.h"
 
 #include <esp_display_panel.hpp>
+#include <esp_lcd_panel_rgb.h>
 
 using namespace esp_panel::board;
 
@@ -37,4 +38,14 @@ void flushDisplay() {
 
 void setBrightness(int percent) {
     if (board && board->getBacklight()) board->getBacklight()->setBrightness(constrain(percent, 5, 100));
+}
+
+void setBacklight(bool on) {
+    if (!board || !board->getBacklight()) return;
+    if (on) board->getBacklight()->on();
+    else board->getBacklight()->off();
+}
+
+void resyncDisplay() {
+    if (board && board->getLCD()) esp_lcd_rgb_panel_restart(board->getLCD()->getRefreshPanelHandle());
 }
