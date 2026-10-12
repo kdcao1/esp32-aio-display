@@ -1,6 +1,6 @@
 # Cooler Screen
 
-An NZXT Kraken-style LCD for a Waveshare ESP32-S3-Touch-LCD-2.8C (480x480 round), driven by CPU/GPU stats from a Windows tray app.
+An NZXT Kraken-style LCD for a Waveshare ESP32-S3-LCD-2.8C (480x480 round, no-touch variant), driven by CPU/GPU stats from a Windows tray app.
 
 ![Preview](docs/preview.png)
 
@@ -15,7 +15,7 @@ cd esp32_app
 pio run -t upload
 ```
 
-The board connects over its native USB port (USB CDC). If upload fails, hold **BOOT**, tap **RESET**, release **BOOT** and retry.
+The board connects over its native USB port (USB CDC). Board pins and timing live in `include/esp_panel_board_custom_conf.h` (touch disabled, pixel clock raised to 26 MHz to remove flicker on dim colors). If upload fails, hold **BOOT**, tap **RESET**, release **BOOT** and retry.
 
 To preview the dashboard on a desktop: `g++ -O2 -std=c++17 -Isrc tools/preview.cpp src/gfx.cpp src/dashboard.cpp -o preview && ./preview .`
 Fonts are generated from Montserrat (SIL OFL) with `python tools/gen_fonts.py` (needs Pillow).
@@ -44,4 +44,5 @@ Newline-terminated commands:
 | `MODE:CPU\|GPU\|DUAL\|GIF` | |
 | `THEME:<RRGGBB>,<RRGGBB>` | Ring gradient |
 | `BRIGHT:<5-100>` | |
+| `TRACK:<RRGGBB>` | Gauge track color |
 | `UPLOAD:<size>,<crc32 hex>` | Device replies `READY`, then `ACK <n>` after each 4096-byte chunk, then `OK` or `ERR <reason>` |
