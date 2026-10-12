@@ -77,7 +77,7 @@
     #define ESP_PANEL_BOARD_LCD_RGB_SPI_USE_DC_BIT          (1) // 0/1. Typically set to 1
 #endif // ESP_PANEL_BOARD_LCD_RGB_USE_CONTROL_PANEL
     /* For refresh panel (RGB) */
-    #define ESP_PANEL_BOARD_LCD_RGB_CLK_HZ          (22 * 1000 * 1000)
+    #define ESP_PANEL_BOARD_LCD_RGB_CLK_HZ          (26 * 1000 * 1000)
                                                             // To increase the upper limit of the PCLK, see: https://docs.espressif.com/projects/esp-faq/en/latest/software-framework/peripherals/lcd.html#how-can-i-increase-the-upper-limit-of-pclk-settings-on-esp32-s3-while-ensuring-normal-rgb-screen-display
     #define ESP_PANEL_BOARD_LCD_RGB_HPW             (8)
     #define ESP_PANEL_BOARD_LCD_RGB_HBP             (10)
