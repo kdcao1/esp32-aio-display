@@ -9,8 +9,8 @@ sd_angle   = 138;
 sd_width   = 16;
 
 port_angles = [-134.5, -45.5];  // USB and UART openings next to the flat
-port_width  = 11;
-port_from_r = 36;       // notch through the back from this radius outward
+port_width  = 13;
+port_from_r = 33;       // notch through the back from this radius outward
 
 flat_d     = 36;      // screen opening is cut flat this far from center toward the flat
 flat_skin  = 1;       // thickness of the cover over the PCB at the flat
