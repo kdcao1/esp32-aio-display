@@ -31,6 +31,7 @@ def format_bytes(n):
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, master, app):
         super().__init__(master)
+        self.withdraw()
         self.app = app
         self.title("Cooler Screen")
         self.geometry("460x620")
@@ -59,6 +60,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self.refresh_gifs()
         self.refresh_sensors()
         self.refresh_firmware()
+        self.update_idletasks()
+        self.deiconify()
 
     def _section(self, parent, text, row):
         ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=14, weight="bold")).grid(
@@ -215,6 +218,9 @@ class SettingsWindow(ctk.CTkToplevel):
 
     def _poll_status(self):
         if not self.winfo_exists():
+            return
+        if self.state() == "withdrawn":
+            self.after(1000, self._poll_status)
             return
         text, color = self.app.status_text()
         self.status.configure(text=text, text_color=color)
