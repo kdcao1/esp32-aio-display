@@ -9,8 +9,9 @@ sd_angle   = 138;
 sd_width   = 16;
 
 port_angles = [-134.5, -45.5];  // USB and UART openings next to the flat
-port_width  = 13;
-port_from_r = 33;       // notch through the back from this radius outward
+port_width  = 11;
+port_from_r = 36;       // notch through the back from this radius outward
+port_top    = 6.5;      // openings are closed above this (original: 9.5)
 
 flat_d     = 36;      // screen opening is cut flat this far from center toward the flat
 flat_skin  = 1;       // thickness of the cover over the PCB at the flat
@@ -39,9 +40,22 @@ module radial_cut(angle, width, r0, y0, y1) {
         translate([r0, y0, -width / 2]) cube([60 - r0, y1 - y0, width]);
 }
 
+module port_fill(angle) {
+    p = [center[0] + 38.8 * cos(angle), -(center[2] - 38.8 * sin(angle))];
+    rotate([-90, 0, 0]) translate([0, 0, port_top]) linear_extrude(9.6 - port_top)
+        intersection() {
+            hull() intersection() {
+                projection(cut = true) translate([0, 0, -5]) rotate([90, 0, 0]) stretched();
+                translate(p) square(14, center = true);
+            }
+            translate([center[0], -center[2]]) difference() { circle(r = 41, $fn = 180); circle(r = 37.9, $fn = 180); }
+        }
+}
+
 difference() {
     union() {
         stretched();
+        for (a = port_angles) port_fill(a);
         translate(center) intersection() {
             translate([0, 12.5 - flat_skin, 0]) rotate([-90, 0, 0]) cylinder(r = 39, h = flat_skin, $fn = 180);
             translate([-50, 0, flat_d]) cube([100, 20, 10]);
