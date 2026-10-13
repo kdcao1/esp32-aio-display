@@ -15,6 +15,7 @@
 #define UPLOAD_RETRIES 8
 #define SAVE_DELAY_MS 2000
 #define FRAME_MS 33
+#define RESYNC_MS 10000
 #define FRAME_BYTES (SCREEN_WIDTH * SCREEN_HEIGHT * 2)
 #define FS_MARGIN 16384
 
@@ -26,6 +27,7 @@ static Dashboard dash;
 static Canvas *canvas = nullptr;
 static Preferences prefs;
 
+static uint32_t lastResyncMs = 0;
 static AnimatedGIF gif;
 static uint8_t *gifData = nullptr;
 static uint16_t *gifTarget = nullptr;
@@ -523,6 +525,11 @@ void loop() {
     if (!backlightOn) {
         delay(20);
         return;
+    }
+
+    if (now - lastResyncMs >= RESYNC_MS) {
+        lastResyncMs = now;
+        resyncDisplay();
     }
 
     if (mode != MODE_GIF) {
