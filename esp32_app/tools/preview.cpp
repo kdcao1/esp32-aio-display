@@ -42,13 +42,13 @@ static void shot(const char *dir, const char *name, View view, Stats stats, bool
 
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : ".";
-    Theme kraken = {0x2D7CFF, 0xB22CFF};
+    Theme neon = {0x2D7CFF, 0xB22CFF};
     Theme heat = {0x00D0FF, 0xFF3B30};
-    shot(dir, "cpu", VIEW_CPU, {47, 18, 52, 34, 31, 2400, 1150}, true, kraken);
+    shot(dir, "cpu", VIEW_CPU, {47, 18, 52, 34, 31, 2400, 1150}, true, neon);
     shot(dir, "cpu_hot", VIEW_CPU, {88, 97, 52, 34, NAN, NAN, NAN}, true, heat);
     shot(dir, "cpu_tempcolor", VIEW_CPU, {78, 60, 52, 34, NAN, NAN, NAN}, true, heat, true);
-    shot(dir, "dual", VIEW_DUAL, {47, 18, 64, 71, NAN, NAN, NAN}, true, kraken);
-    shot(dir, "liquid", VIEW_LIQUID, {47, 18, 64, 71, 33, 2400, 1150}, true, kraken);
-    shot(dir, "offline", VIEW_CPU, {NAN, NAN, NAN, NAN, NAN, NAN, NAN}, false, kraken);
+    shot(dir, "dual", VIEW_DUAL, {47, 18, 64, 71, NAN, NAN, NAN}, true, neon);
+    shot(dir, "liquid", VIEW_LIQUID, {47, 18, 64, 71, 33, 2400, 1150}, true, neon);
+    shot(dir, "offline", VIEW_CPU, {NAN, NAN, NAN, NAN, NAN, NAN, NAN}, false, neon);
     return 0;
 }
