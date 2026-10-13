@@ -156,6 +156,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self.autostart.grid(row=10, column=0, padx=8, sticky="w")
         if self.app.autostart_enabled():
             self.autostart.select()
+        self.restart_btn = ctk.CTkButton(tab, text="Restart display", width=130, command=self._restart)
+        self.restart_btn.grid(row=11, column=0, padx=8, pady=(10, 0), sticky="w")
         self.bundled_fw = None
 
     def _build_gifs(self, tab):
@@ -290,6 +292,16 @@ class SettingsWindow(ctk.CTkToplevel):
 
     def _on_rotation(self, label):
         self.app.set_option("rotation", next(k for k, v in ROTATION_LABELS.items() if v == label))
+
+    def _restart(self):
+        self.restart_btn.configure(state="disabled", text="Restarting...")
+
+        def done(error):
+            self.restart_btn.configure(state="normal", text="Restart display")
+            if error:
+                messagebox.showerror("Cooler Screen", error, parent=self)
+
+        self.app.restart_display(done)
 
     def refresh_firmware(self):
         self.app.firmware_status(self._show_firmware)

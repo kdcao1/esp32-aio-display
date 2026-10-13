@@ -408,6 +408,12 @@ static void handleCommand(char *cmd) {
         const uint8_t *sha = esp_app_get_description()->app_elf_sha256;
         Serial.printf("VERSION %02x%02x%02x%02x%02x%02x%02x%02x %d\n", sha[0], sha[1], sha[2], sha[3], sha[4], sha[5],
                       sha[6], sha[7], PROTOCOL_VERSION);
+    } else if (!strcmp(cmd, "REBOOT")) {
+        saveSettings();
+        Serial.println("OK");
+        Serial.flush();
+        delay(100);
+        ESP.restart();
     } else if (!strcmp(cmd, "ROTATE")) {
         int r = (atoi(arg) / 90) & 3;
         if (r != rotation) {

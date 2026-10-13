@@ -225,6 +225,9 @@ class ESP32Comms:
     def keep_alive(self):
         return self.send_command("ALIVE")
 
+    def reboot(self):
+        return self.send_command("REBOOT")
+
     def version(self):
         lines = self._query("VERSION", "VERSION ")
         return lines[-1].split()[1] if lines else None

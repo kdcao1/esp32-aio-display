@@ -40,3 +40,16 @@ def flash(port, path):
     except (Exception, SystemExit) as e:
         tail = "\n".join(log.getvalue().strip().splitlines()[-4:])
         raise RuntimeError(f"{e}\n{tail}".strip())
+
+
+def reset(port):
+    import esptool
+
+    log = io.StringIO()
+    args = ["--chip", "esp32s3", "--port", port, "--before", "default_reset", "--after", "hard_reset", "chip_id"]
+    try:
+        with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+            esptool.main(args)
+    except (Exception, SystemExit) as e:
+        tail = "\n".join(log.getvalue().strip().splitlines()[-4:])
+        raise RuntimeError(f"{e}\n{tail}".strip())

@@ -73,6 +73,7 @@ class App:
             *[pystray.MenuItem(config.MODE_LABELS[m], self._mode_action(m), checked=self._mode_checked(m), radio=True)
               for m in config.MODES],
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Restart display", lambda: self.call_soon(self.restart_display)),
             pystray.MenuItem("Exit", lambda: self.call_soon(self.exit)),
         )
         self.icon = pystray.Icon("CoolerScreen", create_icon(), "Cooler Screen", menu)
@@ -267,6 +268,30 @@ class App:
                 time.sleep(4)
                 return None
             except (RuntimeError, OSError, ValueError) as e:
+                return str(e)
+            finally:
+                self.flashing = False
+
+        self.run_async(work, on_done)
+
+    def restart_display(self, on_done=None):
+        def work():
+            port = self.comms.device or self.cfg["port"] or next(iter(self.comms._candidates()), None)
+            if not port:
+                return "Device not found"
+            self.flashing = True
+            try:
+                if self.comms.connected:
+                    self.comms.reboot()
+                self.comms.disconnect()
+                for _ in range(4):
+                    time.sleep(2)
+                    if self.comms.connect():
+                        return None
+                firmware.reset(port)
+                time.sleep(4)
+                return None
+            except (RuntimeError, OSError) as e:
                 return str(e)
             finally:
                 self.flashing = False

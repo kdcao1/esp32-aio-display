@@ -43,7 +43,7 @@ GIFs live in a library on the microSD card (falls back to internal flash without
 
 Sensors are picked automatically; the **Sensors** tab lets you choose the exact sensor for CPU/GPU/liquid temperature and pump/fan speed (`venv\Scripts\python monitor.py --list` prints everything available).
 
-The **Device** tab sets rotation, screen power (off when the PC is idle, locked, or asleep/shut down; the board blanks itself after 60 s without the PC) and updates firmware: `build_exe.bat` bundles the last `pio run` build, and the app offers **Update firmware** when the board runs something different. **Flash file...** flashes any `firmware.bin`.
+The **Device** tab sets rotation, screen power (off when the PC is idle, locked, or asleep/shut down; the board blanks itself after 60 s without the PC) and updates firmware: `build_exe.bat` bundles the last `pio run` build, and the app offers **Update firmware** when the board runs something different. **Flash file...** flashes any `firmware.bin`. **Restart display** (also in the tray menu) reboots the board; if the firmware has hung and ignores the command, the app resets it over USB instead.
 
 ## Serial protocol
 
@@ -67,6 +67,7 @@ Newline-terminated commands:
 | `ROTATE:0\|90\|180\|270` | Screen rotation |
 | `SCREEN:ON\|OFF` | Backlight on/off |
 | `SLEEP:<seconds>` | Blank the screen after this long without any command (`0` = never) |
+| `REBOOT` | Restarts the board (replies `OK` first) |
 | `VERSION` | `VERSION <app ELF SHA-256 prefix> <protocol>` |
 
 ## License
