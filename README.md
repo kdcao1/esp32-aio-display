@@ -8,7 +8,7 @@ Modes: **CPU**, **GPU**, **CPU + GPU**, **Liquid** (coolant temp, pump and fan R
 
 ## Download
 
-[Releases](../../releases) have a ready-to-run Windows app (`CoolerScreen-windows.zip`) and `firmware.bin`. Flash the firmware once with `esptool.py --chip esp32s3 write_flash 0x10000 firmware.bin` (or build it below); after that the app's **Device** tab updates it. A 3D-printable tape-on mount is in [`enclosure`](enclosure).
+[Releases](../../releases) have a ready-to-run Windows app (`CoolerScreen-windows.zip`) plus firmware. Flash `firmware-full.bin` once with `esptool.py --chip esp32s3 write_flash 0x0 firmware-full.bin` (or build it below); after that the app's **Device** tab updates it. A 3D-printable tape-on mount is in [`enclosure`](enclosure).
 
 Releases are built by GitHub Actions when a `v*` tag is pushed (`git tag v1.0 && git push origin v1.0`).
 

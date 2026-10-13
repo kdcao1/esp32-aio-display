@@ -19,10 +19,19 @@ jobs:
       - run: pip install platformio
       - run: pio run
         working-directory: esp32_app
+      - name: Merge full flash image
+        working-directory: esp32_app/.pio/build/waveshare_2_8c
+        run: |
+          boot_app0=$(find ~/.platformio/packages -name boot_app0.bin | head -1)
+          pip install esptool==4.8.1
+          esptool.py --chip esp32s3 merge_bin -o firmware-full.bin --flash_mode qio --flash_size 8MB \
+            0x0 bootloader.bin 0x8000 partitions.bin 0xe000 "$boot_app0" 0x10000 firmware.bin
       - uses: actions/upload-artifact@v4
         with:
           name: firmware
-          path: esp32_app/.pio/build/waveshare_2_8c/firmware.bin
+          path: |
+            esp32_app/.pio/build/waveshare_2_8c/firmware.bin
+            esp32_app/.pio/build/waveshare_2_8c/firmware-full.bin
 
   app:
     needs: firmware
@@ -43,7 +52,7 @@ jobs:
         shell: cmd
       - run: Compress-Archive -Path host_app\dist\CoolerScreen -DestinationPath CoolerScreen-windows.zip
         shell: pwsh
-      - run: Copy-Item esp32_app\.pio\build\waveshare_2_8c\firmware.bin firmware.bin
+      - run: Copy-Item esp32_app\.pio\build\waveshare_2_8c\firmware*.bin .
         shell: pwsh
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
@@ -51,6 +60,7 @@ jobs:
           files: |
             CoolerScreen-windows.zip
             firmware.bin
+            firmware-full.bin
           generate_release_notes: true
       - uses: actions/upload-artifact@v4
         if: "!startsWith(github.ref, 'refs/tags/')"
@@ -59,3 +69,4 @@ jobs:
           path: |
             CoolerScreen-windows.zip
             firmware.bin
+            firmware-full.bin
