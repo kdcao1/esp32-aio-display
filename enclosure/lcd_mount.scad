@@ -8,10 +8,12 @@ tab_cut_z  = 78.5;      // where the tab is stretched (straight section)
 sd_angle   = 138;
 sd_width   = 16;
 
-port_angles = [-134.5, -45.5];  // USB and UART openings next to the flat
-port_width  = 11;
+port_gaps   = [[-147, -124], [-56, -33]];  // original openings next to the flat, both closed
+port_angle  = -45.5;    // USB opening (right of the flat, front view)
+port_width  = 13;
+port_top    = 7.5;      // from the back
 port_from_r = 36;       // notch through the back from this radius outward
-port_top    = 6.5;      // openings are closed above this (original: 9.5)
+gap_fill_r  = 38.4;     // closed gaps are filled from this radius outward
 
 flat_d     = 36;      // screen opening is cut flat this far from center toward the flat
 flat_skin  = 1;       // thickness of the cover over the PCB at the flat
@@ -40,27 +42,23 @@ module radial_cut(angle, width, r0, y0, y1) {
         translate([r0, y0, -width / 2]) cube([60 - r0, y1 - y0, width]);
 }
 
-module port_fill(angle) {
-    p = [center[0] + 38.8 * cos(angle), -(center[2] - 38.8 * sin(angle))];
-    rotate([-90, 0, 0]) translate([0, 0, port_top]) linear_extrude(9.6 - port_top)
+module gap_fill(a0, a1) {
+    translate(center) rotate([-90, 0, 0]) linear_extrude(10.6)
         intersection() {
-            hull() intersection() {
-                projection(cut = true) translate([0, 0, -5]) rotate([90, 0, 0]) stretched();
-                translate(p) square(14, center = true);
-            }
-            translate([center[0], -center[2]]) difference() { circle(r = 41, $fn = 180); circle(r = 37.9, $fn = 180); }
+            difference() { circle(r = 39.8, $fn = 180); circle(r = gap_fill_r, $fn = 180); }
+            polygon([[0, 0], for (a = [a0 : 2 : a1]) 50 * [cos(a), sin(a)], 50 * [cos(a1), sin(a1)]]);
         }
 }
 
 difference() {
     union() {
         stretched();
-        for (a = port_angles) port_fill(a);
+        for (g = port_gaps) gap_fill(g[0], g[1]);
         translate(center) intersection() {
             translate([0, 12.5 - flat_skin, 0]) rotate([-90, 0, 0]) cylinder(r = 39, h = flat_skin, $fn = 180);
             translate([-50, 0, flat_d]) cube([100, 20, 10]);
         }
     }
     radial_cut(sd_angle, sd_width, 30, floor_top, ring_bottom);
-    for (a = port_angles) radial_cut(a, port_width, port_from_r, -1, 3.01);
+    radial_cut(port_angle, port_width, port_from_r, -1, port_top);
 }

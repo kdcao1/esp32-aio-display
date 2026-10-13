@@ -5,7 +5,7 @@
 - 0.6 mm more inner diameter (`clearance`)
 - a 16 mm slot in the wall for the microSD card (`sd_angle`, `sd_width`)
 - 1 mm longer toward the ribbon flat (`tab_extra`)
-- the USB and UART openings are moved toward the back so a cable plug fits (`port_top`, `port_width`, `port_from_r`)
+- the UART opening is closed; the USB opening is 13 mm wide, closed above 7.5 mm and runs through the back so a cable plug fits (`port_top`, `port_width`, `port_from_r`)
 - the screen opening is flat at the ribbon side so the PCB does not show (`flat_d`)
 
 Change the numbers in `lcd_mount.scad` and re-export (OpenSCAD: F6, File > Export > STL) if it is still tight or the slot is off.
