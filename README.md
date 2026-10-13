@@ -6,6 +6,12 @@ An NZXT Kraken-style LCD for a Waveshare ESP32-S3-LCD-2.8C (480x480 round, no-to
 
 Modes: **CPU**, **GPU**, **CPU + GPU**, **Liquid** (coolant temp, pump and fan RPM) gauges, or a looping **GIF**. Ring colors (gradient or color that follows temperature), brightness and mode are set from the tray app and remembered by the device.
 
+## Download
+
+[Releases](../../releases) have a ready-to-run Windows app (`CoolerScreen-windows.zip`) and `firmware.bin`. Flash the firmware once with `esptool.py --chip esp32s3 write_flash 0x10000 firmware.bin` (or build it below); after that the app's **Device** tab updates it. A 3D-printable tape-on mount is in [`enclosure`](enclosure).
+
+Releases are built by GitHub Actions when a `v*` tag is pushed (`git tag v1.0 && git push origin v1.0`).
+
 ## Firmware (`esp32_app`)
 
 Requires [PlatformIO](https://platformio.org/). The project uses the [pioarduino](https://github.com/pioarduino/platform-espressif32) platform (Arduino core 3.x).
@@ -62,3 +68,7 @@ Newline-terminated commands:
 | `SCREEN:ON\|OFF` | Backlight on/off |
 | `SLEEP:<seconds>` | Blank the screen after this long without any command (`0` = never) |
 | `VERSION` | `VERSION <app ELF SHA-256 prefix> <protocol>` |
+
+## License
+
+MIT, see [LICENSE](LICENSE). Bundled and linked third-party components are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
