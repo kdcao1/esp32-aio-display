@@ -70,7 +70,7 @@ bool Dashboard::update(uint32_t nowMs) {
         dirty = true;
     }
 
-    float k = 1.0f - expf(-dt / 180.0f);
+    float k = 1.0f - expf(-dt / 450.0f);
     for (int i = 0; i < VALUES; i++) {
         float goal = valid(i) ? target[i] : 0.0f;
         float diff = goal - shown[i];
