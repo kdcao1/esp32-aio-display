@@ -9,3 +9,6 @@ dist/
 *.spec
 icon.ico
 host_app/firmware/
+.claude/
+preview
+firmware-full.bin
